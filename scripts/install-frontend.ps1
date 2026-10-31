@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $ProjectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $nodeCandidates = @()
 foreach ($command in (Get-Command node.exe -All -ErrorAction SilentlyContinue)) {
