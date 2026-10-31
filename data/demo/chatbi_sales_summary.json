@@ -1,0 +1,309 @@
+{
+  "period": {
+    "start": "2026-01-01",
+    "end": "2026-10-29",
+    "latest_month": "2026-10"
+  },
+  "totals": {
+    "order_count": 906,
+    "customer_count": 179,
+    "unpaid_order_count": 73,
+    "revenue": 8079554.17,
+    "cost": 4842786.51,
+    "gross_profit": 3236767.66,
+    "paid_revenue": 7472458.64,
+    "open_receivables": 607095.53,
+    "avg_order_value": 8917.83,
+    "gross_margin_pct": 40.06
+  },
+  "latest_month": {
+    "revenue": 853824.14,
+    "previous_month_revenue": 844988.23,
+    "growth_pct": 1.05,
+    "order_count": 87,
+    "active_customers": 73,
+    "avg_order_value": 9814.07,
+    "gross_profit": 354343.77,
+    "cost": 499480.37,
+    "gross_margin_pct": 41.5,
+    "paid_revenue": 795178.26,
+    "collection_pct": 93.13,
+    "gross_profit_change_pct": -1.23,
+    "regions": [
+      {
+        "name": "西南",
+        "revenue": 252728.53,
+        "share_pct": 29.6
+      },
+      {
+        "name": "华东",
+        "revenue": 202908.06,
+        "share_pct": 23.76
+      },
+      {
+        "name": "华中",
+        "revenue": 200926.43,
+        "share_pct": 23.53
+      },
+      {
+        "name": "华南",
+        "revenue": 105105.8,
+        "share_pct": 12.31
+      },
+      {
+        "name": "华北",
+        "revenue": 92155.32,
+        "share_pct": 10.79
+      }
+    ],
+    "channels": [
+      {
+        "name": "线上推广",
+        "revenue": 292999.36,
+        "share_pct": 34.32
+      },
+      {
+        "name": "直销",
+        "revenue": 191438.81,
+        "share_pct": 22.42
+      },
+      {
+        "name": "客户续费",
+        "revenue": 187430.86,
+        "share_pct": 21.95
+      },
+      {
+        "name": "渠道",
+        "revenue": 181955.11,
+        "share_pct": 21.31
+      }
+    ],
+    "as_of_day": 29
+  },
+  "regions": [
+    {
+      "name": "华中",
+      "revenue": 1669487.98,
+      "share_pct": 20.66,
+      "paid_pct": 89.24
+    },
+    {
+      "name": "华南",
+      "revenue": 1654272.24,
+      "share_pct": 20.47,
+      "paid_pct": 91.89
+    },
+    {
+      "name": "华北",
+      "revenue": 1622269.49,
+      "share_pct": 20.08,
+      "paid_pct": 91.48
+    },
+    {
+      "name": "华东",
+      "revenue": 1610209.37,
+      "share_pct": 19.93,
+      "paid_pct": 95.27
+    },
+    {
+      "name": "西南",
+      "revenue": 1523315.09,
+      "share_pct": 18.85,
+      "paid_pct": 94.82
+    }
+  ],
+  "channels": [
+    {
+      "name": "线上推广",
+      "revenue": 2308895.67,
+      "share_pct": 28.58
+    },
+    {
+      "name": "客户续费",
+      "revenue": 1998514.11,
+      "share_pct": 24.74
+    },
+    {
+      "name": "直销",
+      "revenue": 1895304.76,
+      "share_pct": 23.46
+    },
+    {
+      "name": "渠道",
+      "revenue": 1876839.63,
+      "share_pct": 23.23
+    }
+  ],
+  "products": [
+    {
+      "name": "企业智能分析",
+      "revenue": 2829171.83,
+      "share_pct": 35.02
+    },
+    {
+      "name": "数据治理服务",
+      "revenue": 2174875.23,
+      "share_pct": 26.92
+    },
+    {
+      "name": "销售预测模块",
+      "revenue": 1997834.05,
+      "share_pct": 24.73
+    },
+    {
+      "name": "基础版订阅",
+      "revenue": 1077673.06,
+      "share_pct": 13.34
+    }
+  ],
+  "months": [
+    {
+      "month": "2026-01",
+      "revenue": 834579.58,
+      "gross_profit": 324730.77
+    },
+    {
+      "month": "2026-02",
+      "revenue": 713050.02,
+      "gross_profit": 293510.64
+    },
+    {
+      "month": "2026-03",
+      "revenue": 744785.26,
+      "gross_profit": 296094.97
+    },
+    {
+      "month": "2026-04",
+      "revenue": 833678.74,
+      "gross_profit": 319240.78
+    },
+    {
+      "month": "2026-05",
+      "revenue": 723831.08,
+      "gross_profit": 294133.81
+    },
+    {
+      "month": "2026-06",
+      "revenue": 792175.68,
+      "gross_profit": 313652.48
+    },
+    {
+      "month": "2026-07",
+      "revenue": 874331.71,
+      "gross_profit": 343541.98
+    },
+    {
+      "month": "2026-08",
+      "revenue": 830906.34,
+      "gross_profit": 328508.84
+    },
+    {
+      "month": "2026-09",
+      "revenue": 878391.62,
+      "gross_profit": 369009.62
+    },
+    {
+      "month": "2026-10",
+      "revenue": 853824.14,
+      "gross_profit": 354343.77
+    }
+  ],
+  "recent_transactions": [
+    {
+      "order_id": "ORD-20261029-0904",
+      "date": "2026-10-29",
+      "time": "14:53",
+      "customer": "华东示例企业014",
+      "region": "华东",
+      "product": "销售预测模块",
+      "channel": "渠道",
+      "amount": 5389.6,
+      "cost": 2774.78,
+      "payment_status": "已回款"
+    },
+    {
+      "order_id": "ORD-20261029-0905",
+      "date": "2026-10-29",
+      "time": "12:30",
+      "customer": "华北示例企业042",
+      "region": "华北",
+      "product": "销售预测模块",
+      "channel": "渠道",
+      "amount": 7943.4,
+      "cost": 4761.94,
+      "payment_status": "已回款"
+    },
+    {
+      "order_id": "ORD-20261029-0906",
+      "date": "2026-10-29",
+      "time": "09:27",
+      "customer": "西南示例企业125",
+      "region": "西南",
+      "product": "基础版订阅",
+      "channel": "客户续费",
+      "amount": 3175.88,
+      "cost": 1842.84,
+      "payment_status": "已回款"
+    },
+    {
+      "order_id": "ORD-20261028-0901",
+      "date": "2026-10-28",
+      "time": "18:23",
+      "customer": "华中示例企业161",
+      "region": "华中",
+      "product": "企业智能分析",
+      "channel": "线上推广",
+      "amount": 15401.36,
+      "cost": 9561.21,
+      "payment_status": "已回款"
+    },
+    {
+      "order_id": "ORD-20261028-0902",
+      "date": "2026-10-28",
+      "time": "10:11",
+      "customer": "华北示例企业040",
+      "region": "华北",
+      "product": "销售预测模块",
+      "channel": "线上推广",
+      "amount": 11461.04,
+      "cost": 7070.53,
+      "payment_status": "已回款"
+    },
+    {
+      "order_id": "ORD-20261028-0903",
+      "date": "2026-10-28",
+      "time": "09:22",
+      "customer": "华东示例企业031",
+      "region": "华东",
+      "product": "销售预测模块",
+      "channel": "直销",
+      "amount": 6358.73,
+      "cost": 4189.32,
+      "payment_status": "已回款"
+    },
+    {
+      "order_id": "ORD-20261027-0899",
+      "date": "2026-10-27",
+      "time": "18:41",
+      "customer": "华东示例企业033",
+      "region": "华东",
+      "product": "销售预测模块",
+      "channel": "直销",
+      "amount": 9912.67,
+      "cost": 6720.36,
+      "payment_status": "已回款"
+    },
+    {
+      "order_id": "ORD-20261027-0900",
+      "date": "2026-10-27",
+      "time": "15:07",
+      "customer": "华南示例企业098",
+      "region": "华南",
+      "product": "销售预测模块",
+      "channel": "客户续费",
+      "amount": 9490.79,
+      "cost": 5219.43,
+      "payment_status": "已回款"
+    }
+  ]
+}
