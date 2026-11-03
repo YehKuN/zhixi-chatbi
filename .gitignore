@@ -4,6 +4,7 @@
 .codex/
 .playwright-cli/
 .venv/
+.venv-sandbox/
 .pytest-tmp-check/
 .playwright-mcp/
 .data/

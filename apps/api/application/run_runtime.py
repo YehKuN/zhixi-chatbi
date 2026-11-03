@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+import shutil
+import sys
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 
 from agent_runtime.analysis_planning import materialize_analysis_plan
@@ -66,6 +70,7 @@ from application.agent_ports import DataGatewayAgentPort, DataGatewaySchemaPort,
 from application.datalink_client import DataLinkManagementPort
 from application.datasource_factory import build_datasource_service
 from application.docker_sandbox import DockerSandbox
+from application.local_sandbox import LocalSandbox
 from application.model_runtime import OpenAICompatibleModelClient, RunDeadline
 from application.result_outputs import ResultOutputService
 from application.run_execution import RunExecutionContext
@@ -1156,8 +1161,54 @@ def _datalink_port_factory(settings: Settings) -> DataLinkPortFactory:
     return build
 
 
+logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _local_sandbox_python(settings: Settings) -> str:
+    """解析本地沙箱解释器：显式配置优先，其次项目 .venv-sandbox。"""
+
+    configured = settings.sandbox_python.strip()
+    if configured:
+        return configured
+    candidates = [
+        _PROJECT_ROOT / ".venv-sandbox" / "Scripts" / "python.exe",
+        _PROJECT_ROOT / ".venv-sandbox" / "bin" / "python",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return sys.executable
+
+
 def _sandbox_factory(settings: Settings) -> SandboxFactory:
-    """按 Run 已固定的镜像创建 Sandbox，避免执行中重读环境配置。"""
+    """按配置创建 Sandbox；auto 在无 Docker CLI 时降级到本地沙箱。"""
+
+    use_local = settings.sandbox_mode == "local" or (
+        settings.sandbox_mode == "auto" and shutil.which("docker") is None
+    )
+    if use_local:
+        local_python = _local_sandbox_python(settings)
+        logger.info("Using local Python sandbox (trusted environment only)")
+        if settings.sandbox_mode == "auto":
+            logger.warning(
+                "Docker CLI not found; Python analysis is running in the local sandbox. "
+                "Set SANDBOX_MODE=docker to require container isolation."
+            )
+
+        def build_local(
+            workspaces: ScriptWorkspaceManager, image: str, deadline: RunDeadline
+        ) -> SandboxPort:
+            del image
+            return LocalSandbox(
+                workspaces=workspaces,
+                python_executable=local_python,
+                timeout_seconds=settings.python_sandbox_timeout_seconds,
+                timeout_provider=deadline.remaining_seconds,
+            )
+
+        return build_local
 
     def build(workspaces: ScriptWorkspaceManager, image: str, deadline: RunDeadline) -> SandboxPort:
         return DockerSandbox(
