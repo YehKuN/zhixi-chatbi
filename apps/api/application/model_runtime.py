@@ -222,7 +222,9 @@ def build_openai_compatible_chat_model(
         "api_key": api_key,
         "temperature": temperature,
         "timeout": timeout,
-        "max_retries": 0,
+        # 上游 429/5xx（如 DeepSeek 503 “Service is too busy”）由 OpenAI SDK
+        # 做短暂重试；外层阶段时限仍会兜住总时长。
+        "max_retries": 2,
     }
     if max_tokens is not None:
         options["max_tokens"] = max_tokens

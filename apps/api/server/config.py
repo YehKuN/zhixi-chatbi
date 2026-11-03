@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from agent_runtime.runtime_limits import AgentRuntimeLimits
 from application.runtime_limits import (
@@ -40,6 +40,10 @@ class Settings(BaseSettings):
         alias="SESSION_WORKSPACE_ROOT",
     )
     sandbox_image: str = Field(default="chatbi-analysis:0.1.0", alias="SANDBOX_IMAGE")
+    sandbox_mode: Literal["auto", "docker", "local"] = Field(
+        default="auto", alias="SANDBOX_MODE"
+    )
+    sandbox_python: str = Field(default="", alias="SANDBOX_PYTHON")
     secret_master_key: str = Field(alias="SECRET_MASTER_KEY", min_length=16)
     datalink_base_url: str = Field(default="http://localhost:8281", alias="DATALINK_BASE_URL")
     datalink_mcp_url: str = Field(default="http://localhost:8281/mcp", alias="DATALINK_MCP_URL")
@@ -69,6 +73,9 @@ class Settings(BaseSettings):
         alias="DEEPSEEK_TIMEOUT_SECONDS",
     )
     deepseek_max_retries: int = Field(default=2, ge=0, le=5, alias="DEEPSEEK_MAX_RETRIES")
+    deepseek_max_output_tokens: int = Field(
+        default=8192, ge=256, le=16384, alias="DEEPSEEK_MAX_OUTPUT_TOKENS"
+    )
     analysis_preparation_max_seconds: int = runtime_limit_field("preparation_max_seconds")
     run_opening_timeout_seconds: int = runtime_limit_field("run_opening_timeout_seconds")
     analysis_semantic_context_timeout_seconds: int = runtime_limit_field(
