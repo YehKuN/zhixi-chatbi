@@ -33,6 +33,17 @@
 | 洞察报告 | 结论、口径、证据状态、限制说明、Markdown 导出 |
 | 项目台账 / 收支管理 | 项目阶段与进度、收入/成本/回款明细（演示记录，不写外部系统） |
 
+## 真实企业数据
+
+平台已接入两套公开、可追溯的真实企业数据，放在 `data/public/`，字段说明、来源与 DOI 见 [data/public/README.md](data/public/README.md)。
+
+| 数据集 | 规模 | 来源 |
+| --- | --- | --- |
+| UCI Bank Marketing（银行电话营销） | 45,211 条 | UCI ID 222，DOI 10.24432/C5K306 |
+| UCI Online Shoppers（在线商店访客） | 12,330 条会话 | UCI ID 468，DOI 10.24432/C5F88Q |
+
+两套数据均在「数据资产」中完成 Schema 检查与遮蔽字段确认，并已构建 DataLink 语义图谱，可直接用于智能问数和证据链分析。
+
 ## 技术架构
 
 ```text
@@ -78,7 +89,7 @@ tests                    后端测试（46 个文件）
 - Windows 10/11
 - Python 3.12（`py -3.12`）
 - Node.js 22.12 或更新版本
-- Docker（仅真实 Python 分析产物需要；演示与 SQL 分析不依赖）
+- Docker（推荐；未安装时自动降级到本地 `.venv-sandbox`，隔离能力较弱）
 - 可选：DeepSeek API Key（不配置时自动进入演示模式）
 
 ### 一键启动
@@ -117,6 +128,17 @@ powershell -ExecutionPolicy Bypass -File scripts\install-frontend.ps1
 powershell -ExecutionPolicy Bypass -File scripts\dev-services.ps1 -Action Start
 ```
 
+### 无 Docker 环境（本地沙箱降级）
+
+未安装 Docker 时，平台自动使用 `.venv-sandbox` 执行 Python 分析与图表生成。首次准备：
+
+```powershell
+py -3.12 -m venv .venv-sandbox
+.venv-sandbox\Scripts\python.exe -m pip install pandas==2.2.3 numpy==2.2.0 matplotlib==3.9.3 seaborn==0.13.2 openpyxl==3.1.5
+```
+
+`SANDBOX_MODE=auto` 在没有 Docker CLI 时自动选择本地沙箱；`docker` 强制容器；`local` 强制本地。本地沙箱固定入口脚本、工作目录、超时并禁用网络访问，但不提供容器级文件系统隔离，只适合可信数据的本机演示。
+
 ### 环境变量
 
 复制 `.env.example` 为 `.env`，按需填写。**不要把 `.env` 提交到仓库。**
@@ -127,6 +149,8 @@ powershell -ExecutionPolicy Bypass -File scripts\dev-services.ps1 -Action Start
 | `DEEPSEEK_API_KEY` | 可选 | 启用真实 DeepSeek 问数；缺失时进入演示模式 |
 | `DEEPSEEK_BASE_URL` | 否 | 默认 `https://api.deepseek.com` |
 | `DEEPSEEK_MODEL` | 否 | 默认 `deepseek-flash` |
+| `SANDBOX_MODE` | 否 | `auto` / `docker` / `local`；默认 `auto` |
+| `SANDBOX_PYTHON` | 否 | 本地沙箱解释器路径；默认 `.venv-sandbox` |
 | `CORS_ORIGINS` | 是 | 前端来源白名单，默认 `http://localhost:5280` |
 | `METADATA_DATABASE_URL` | 是 | 默认 `sqlite+aiosqlite:///./storage/metadata.db` |
 | `DATALINK_BASE_URL` / `DATALINK_MCP_URL` | 是 | 默认 `http://localhost:8281` 与 `/mcp` |
