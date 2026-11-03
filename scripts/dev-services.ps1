@@ -332,12 +332,19 @@ function Start-ManagedServices {
     $node = Resolve-NodeExecutable
     $devPythonPath = (Resolve-Path -LiteralPath (Join-Path $ProjectRoot 'scripts\dev-python')).Path
     $datalinkPythonPath = (Resolve-Path -LiteralPath (Join-Path $ProjectRoot 'services\datalink')).Path
+    # DataLink 建图复用主服务的 DeepSeek 配置；密钥仍只经进程环境变量注入。
+    $datalinkLlmModel = if ($env:DATALINK_LLM_MODEL) { $env:DATALINK_LLM_MODEL } elseif ($env:DEEPSEEK_MODEL) { $env:DEEPSEEK_MODEL } else { 'deepseek-flash' }
+    $datalinkLlmBaseUrl = if ($env:DATALINK_LLM_BASE_URL) { $env:DATALINK_LLM_BASE_URL } elseif ($env:DEEPSEEK_BASE_URL) { $env:DEEPSEEK_BASE_URL } else { 'https://api.deepseek.com' }
+    $datalinkLlmApiKey = if ($env:DATALINK_LLM_API_KEY) { $env:DATALINK_LLM_API_KEY } else { $env:DEEPSEEK_API_KEY }
     # Start-Process joins ArgumentList into a single command line; quote paths with spaces.
     $quotedDataLinkPythonPath = '"' + $datalinkPythonPath + '"'
     $datalinkLaunch = Start-ManagedProcess 'datalink' $python @(
         '-m', 'uvicorn', 'server.main:app', '--app-dir', $quotedDataLinkPythonPath, '--host', '127.0.0.1', '--port', "$DataLinkPort"
     ) $DataLinkPort @{
         DATALINK_SERVICE_TOKEN = $datalinkServiceToken
+        DATALINK_LLM_MODEL = $datalinkLlmModel
+        DATALINK_LLM_BASE_URL = $datalinkLlmBaseUrl
+        DATALINK_LLM_API_KEY = $datalinkLlmApiKey
         # dev-python 的 sitecustomize 禁用 Windows WMI 查询；SQLAlchemy 导入
         # platform.machine() 在 WMI 服务异常的机器上会无限阻塞，缺它则启动挂死。
         PYTHONPATH = "$datalinkPythonPath;$devPythonPath"

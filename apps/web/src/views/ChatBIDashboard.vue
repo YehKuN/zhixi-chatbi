@@ -63,9 +63,9 @@ const navItems = [
   { id: "finance" as const, label: "收支管理", icon: Wallet },
 ];
 const prompts = [
-  "对比本月与上月各区域销售额",
-  "今年各产品线的收入趋势如何？",
-  "分析本月活跃客户数与平均订单金额",
+  "对比 5 月和 6 月的营销转化表现",
+  "哪些客户群体的转化率最高？",
+  "6 月转化率比 5 月高多少？",
 ];
 const reportRows = [
   { title: "Q3 经营复盘与增长洞察", type: "季度分析", time: "今天 09:42" },
@@ -93,11 +93,28 @@ const insightItems = ref([
   { kind: "warning", label: "待回款", title: demoSummary.totals.unpaid_order_count + " 笔订单待回款", detail: "应收金额 " + formatWan(demoSummary.totals.open_receivables) + "，可按区域及客户分组核对。", icon: AlertTriangle, time: "10/29" },
   { kind: "neutral", label: "数据范围", title: demoSummary.totals.customer_count + " 家客户 · 906 笔订单", detail: "数据覆盖 2026 年 1 月至 10 月 29 日，累计毛利率 " + demoSummary.totals.gross_margin_pct.toFixed(1) + "%。", icon: ShieldCheck, time: "10/29" },
 ]);
-const datasourceReady = computed(() => datasources.items.find((item) =>
+const preferredDatasourceId = ref<string | null>(null);
+const readyDatasources = computed(() => datasources.items.filter((item) =>
   (item.status === "ready" || item.status === "schema_ready") && item.mask_fields_confirmed,
-) ?? null);
+));
+const datasourceReady = computed(() => {
+  const ready = readyDatasources.value;
+  return ready.find((item) => item.id === preferredDatasourceId.value) ?? ready[0] ?? null;
+});
 const activeModel = computed(() => models.items.find((item) => item.is_active) ?? null);
 const liveAgentReady = computed(() => datasourceReady.value !== null && activeModel.value !== null);
+const briefingText = computed(() => {
+  if (!liveAgentReady.value) {
+    return "截至 10 月 29 日，订单金额较 9 月同期" +
+      (latestDemoMonth.growth_pct >= 0 ? "增长" : "下降") + " " +
+      Math.abs(latestDemoMonth.growth_pct).toFixed(1) + "%。";
+  }
+  if (runs.currentRun?.status === "succeeded") {
+    return "最近一次真实数据分析已完成，结论、SQL 审计与查询产物可在运行详情中回放。";
+  }
+  return "已连接真实数据源「" + (datasourceReady.value?.name ?? "") +
+    "」与模型「" + (activeModel.value?.model_name ?? "") + "」，提问后将生成带证据的分析结论。";
+});
 const datasourceLabel = computed(() => datasourceReady.value?.name ?? "演示 · 906 条订单");
 const activeTitle = computed(() => ({
   dashboard: "经营驾驶舱",
@@ -272,6 +289,28 @@ function demoAnswer(prompt: string) {
   ];
   updateCharts();
 }
+function applyLiveWorkspaceState() {
+  const source = datasourceReady.value;
+  const model = activeModel.value;
+  if (!source || !model || runs.currentRun !== null) return;
+  analysisSource.value = "真实数据源 · " + source.name + " · Schema v" + source.schema_revision;
+  latestQuestion.value = "真实数据工作空间已就绪";
+  aiConclusion.value = "已连接真实数据源「" + source.name + "」与模型「" + model.model_name +
+    "」。输入业务问题后，平台将通过只读 SQL、证据链与结论校验生成可追溯的分析。";
+  insightItems.value = [
+    { kind: "positive", label: "数据接入", title: source.name + " 已就绪", detail: "Schema v" + source.schema_revision + " · 遮蔽字段已确认，可用于真实分析。", icon: Database, time: formatTime(new Date()) },
+    { kind: "neutral", label: "分析引擎", title: model.model_name + " 已激活", detail: model.tool_calling_supported ? "Tool Calling 探测已通过，支持受控 SQL 与证据链。" : "模型已激活，等待能力探测。", icon: BrainCircuit, time: formatTime(new Date()) },
+    { kind: "warning", label: "下一步", title: "提出一个真实业务问题", detail: "例如：对 5 月和 6 月的营销数据做一次详细分析，生成带引用的结论。", icon: Lightbulb, time: formatTime(new Date()) },
+  ];
+}
+function applyRunInsights(reply: string) {
+  const summary = reply.replace(/\s+/g, " ").slice(0, 72);
+  insightItems.value = [
+    { kind: "positive", label: "分析结论", title: "本次真实数据分析已完成", detail: summary + (reply.length > 72 ? "…" : ""), icon: TrendingUp, time: formatTime(new Date()) },
+    { kind: "neutral", label: "证据链", title: runs.sqlAudits.length + " 条 SQL 审计 · " + runs.artifacts.length + " 个产物", detail: "查询语句、结果产物与结论引用均已登记，可在分析工作台回放。", icon: ShieldCheck, time: formatTime(new Date()) },
+    { kind: "warning", label: "数据范围", title: runs.currentRun?.datasource_id ? "已绑定真实数据源" : "数据源已记录", detail: "结论仅覆盖本次只读查询命中的记录，查询上限内的结果不代表全量数据。", icon: AlertTriangle, time: formatTime(new Date()) },
+  ];
+}
 async function submitQuestion() {
   const prompt = question.value.trim();
   if (!prompt || isAnalyzing.value) return;
@@ -298,6 +337,7 @@ async function submitQuestion() {
       return;
     }
   }
+  let receivedText = false;
   try {
     analysisSource.value = "DeepSeek Responses · 流式输出";
     aiConclusion.value = "";
@@ -310,7 +350,6 @@ async function submitQuestion() {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let receivedText = false;
     while (true) {
       const chunk = await reader.read();
       if (chunk.done) break;
@@ -335,6 +374,12 @@ async function submitQuestion() {
       return;
     }
   } catch (error) {
+    if (receivedText) {
+      aiConclusion.value += "\n\n> 本次生成中断，以上为已获取内容；可重试获取完整分析。";
+      isAnalyzing.value = false;
+      notify(error instanceof Error ? error.message : "DeepSeek 分析中断，已保留部分结果", "warning");
+      return;
+    }
     notify(error instanceof Error ? error.message : "DeepSeek 暂不可用，已切回演示分析", "warning");
   }
   aiConclusion.value = "正在使用本地演示数据生成可复现的分析结果…";
@@ -383,7 +428,10 @@ watch(() => runs.currentRun?.status, async (status) => {
     if (sessionId) {
       await sessions.select(sessionId);
       const reply = [...sessions.messages].reverse().find((item: Message) => item.role === "assistant");
-      if (reply?.content_text) aiConclusion.value = reply.content_text;
+      if (reply?.content_text) {
+        aiConclusion.value = reply.content_text;
+        applyRunInsights(reply.content_text);
+      }
     }
     notify("分析完成，结论与证据已更新");
   } else {
@@ -395,7 +443,11 @@ watch(() => runs.currentRun?.status, async (status) => {
 onMounted(async () => {
   initCharts();
   await Promise.allSettled([datasources.load(), models.load(), sessions.load()]);
-  if (liveAgentReady.value) analysisSource.value = "受控分析引擎 · 数据源已连接";
+  preferredDatasourceId.value = datasourceReady.value?.id ?? null;
+  if (liveAgentReady.value) applyLiveWorkspaceState();
+});
+watch(preferredDatasourceId, () => {
+  if (liveAgentReady.value) applyLiveWorkspaceState();
 });
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
@@ -424,15 +476,15 @@ onBeforeUnmount(() => {
       <header class="topbar"><div class="crumb"><span>工作空间</span><i>/</i><strong>{{ activeTitle }}</strong><span class="realtime"><i />实时</span></div><div class="top-actions"><div class="time-label"><i />{{ formatTime(lastUpdated) }} <span>·</span> 2026.10.29</div><button class="icon-action interactive" type="button" title="帮助中心" @click="notify('帮助中心即将开放，欢迎继续探索工作台', 'info')"><CircleHelp :size="17" /></button><button class="icon-action interactive" type="button" title="刷新数据" @click="refreshDashboard"><RefreshCw :size="16" /></button><button class="icon-action interactive notification-icon" type="button" title="3 条待处理提醒" @click="notify('当前有 3 条经营提醒待查看', 'warning')"><i /> <Activity :size="17" /></button><button type="button" class="primary-action interactive" @click="openUpload"><Upload :size="14" />导入数据</button></div></header>
       <div class="page-scroll"><div class="page-content">
         <template v-if="activeSection === 'dashboard' || activeSection === 'query'">
-          <section class="page-heading"><div><div class="eyebrow"><i />{{ activeSection === "query" ? "NATURAL LANGUAGE ANALYTICS" : "THURSDAY, OCTOBER 29, 2026 · 经营总览" }}</div><h1>{{ greeting }}，让数据 <span>回答问题。</span></h1><p>用自然语言探索业务，让每一份洞察都有据可查。</p></div><button type="button" class="date-range interactive" @click="notify('当前展示 2026 年 10 月经营数据', 'info')"><Clock3 :size="15" />2026年10月<ChevronDown :size="13" /></button></section>
+          <section class="page-heading"><div><div class="eyebrow"><i />{{ activeSection === "query" ? "NATURAL LANGUAGE ANALYTICS" : "THURSDAY, OCTOBER 29, 2026 · 经营总览" }}</div><h1>{{ greeting }}，让数据 <span>回答问题。</span></h1><p>用自然语言探索业务，让每一份洞察都有据可查。</p></div><button type="button" class="date-range interactive" @click="notify(liveAgentReady ? '驾驶舱图表为示例数据；智能问数使用当前选择的真实数据源' : '当前展示 2026 年 10 月示例经营数据', 'info')"><Clock3 :size="15" />2026年10月 · 示例<ChevronDown :size="13" /></button></section>
           <section class="metric-grid" aria-label="核心经营指标">
             <article v-for="(metric, index) in metrics" :key="metric.label" class="metric-card interactive" :class="'metric-' + metric.color" :style="{ '--card-index': index }"><div class="metric-top"><span>{{ metric.label }}</span><i><component :is="metric.icon" :size="16" /></i></div><div class="metric-value-row"><strong>{{ metric.value }}</strong><svg class="mini-spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"><path :d="metric.spark" /></svg></div><div class="metric-foot"><span class="metric-change"><ArrowUpRight :size="13" />{{ metric.change }}</span><span>{{ metric.foot }}</span><small>近30天</small></div><i class="metric-accent" /></article>
           </section>
           <section class="main-grid">
-            <article class="panel trend-panel"><header class="panel-heading"><div><div class="panel-kicker"><i />经营表现</div><h2>营收趋势分析 <span>·</span> <small>Revenue Overview</small></h2></div><div class="panel-tools"><span class="live-pill"><i />实时数据</span><button type="button" class="menu-button interactive" aria-label="营收趋势选项" @click="notify('图表展示 2026 年 1 月至 10 月月度营收和毛利', 'info')"><MoreHorizontal :size="18" /></button></div></header><div class="trend-total"><strong>{{ formatWan(latestDemoMonth.revenue) }}</strong><span :class="{ down: latestDemoMonth.growth_pct < 0 }"><ArrowUpRight v-if="latestDemoMonth.growth_pct >= 0" :size="14" /><ArrowDownRight v-else :size="14" />{{ latestDemoMonth.growth_pct >= 0 ? '+' : '' }}{{ latestDemoMonth.growth_pct.toFixed(1) }}%</span><em>10 月 1 日—{{ latestDemoMonth.as_of_day }} 日 · 较 9 月同期</em></div><div ref="trendHost" class="trend-chart" role="img" aria-label="2026年1月至10月每月营收和毛利趋势图" /><div class="chart-foot"><span><i class="legend-dot cyan" />月度营收与毛利 · 2026年</span><span>更新于 {{ formatTime(lastUpdated) }}</span><button type="button" @click="selectSection('reports')">查看分析 <ArrowUpRight :size="13" /></button></div></article>
-            <article class="panel insight-panel"><header class="panel-heading"><div><div class="panel-kicker"><Sparkles :size="13" />AI 智能洞察</div><h2>值得关注的信号</h2></div><button type="button" class="text-action interactive" @click="selectSection('reports')">全部洞察 <ArrowUpRight :size="13" /></button></header><div class="briefing"><span class="briefing-orb"><BrainCircuit :size="19" /></span><div><small>AI DAILY BRIEFING</small><p>截至 10 月 29 日，订单金额较 9 月同期<strong>{{ latestDemoMonth.growth_pct >= 0 ? "增长" : "下降" }} {{ Math.abs(latestDemoMonth.growth_pct).toFixed(1) }}%</strong>。</p></div></div><div class="insight-list"><button v-for="item in insightItems" :key="item.title" type="button" class="insight-row interactive" :class="'insight-' + item.kind" @click="notify(item.detail, item.kind === 'warning' ? 'warning' : 'info')"><i class="insight-symbol"><component :is="item.icon" :size="15" /></i><span class="insight-body"><span class="insight-row-meta"><em>{{ item.label }}</em><small>{{ item.time }}</small></span><strong>{{ item.title }}</strong><small>{{ item.detail }}</small></span><ArrowUpRight :size="14" class="insight-arrow" /></button></div><button type="button" class="weekly-link interactive" @click="selectSection('reports')"><span><Lightbulb :size="14" />演示数据包含 <strong>{{ demoSummary.totals.order_count }}</strong> 笔可追溯订单</span><ArrowUpRight :size="14" /></button></article>
+            <article class="panel trend-panel"><header class="panel-heading"><div><div class="panel-kicker"><i />经营表现</div><h2>营收趋势分析 <span>·</span> <small>Revenue Overview</small></h2></div><div class="panel-tools"><span class="live-pill"><i />示例数据</span><button type="button" class="menu-button interactive" aria-label="营收趋势选项" @click="notify('图表展示 2026 年 1 月至 10 月月度营收和毛利', 'info')"><MoreHorizontal :size="18" /></button></div></header><div class="trend-total"><strong>{{ formatWan(latestDemoMonth.revenue) }}</strong><span :class="{ down: latestDemoMonth.growth_pct < 0 }"><ArrowUpRight v-if="latestDemoMonth.growth_pct >= 0" :size="14" /><ArrowDownRight v-else :size="14" />{{ latestDemoMonth.growth_pct >= 0 ? '+' : '' }}{{ latestDemoMonth.growth_pct.toFixed(1) }}%</span><em>10 月 1 日—{{ latestDemoMonth.as_of_day }} 日 · 较 9 月同期</em></div><div ref="trendHost" class="trend-chart" role="img" aria-label="2026年1月至10月每月营收和毛利趋势图" /><div class="chart-foot"><span><i class="legend-dot cyan" />月度营收与毛利 · 2026年</span><span>更新于 {{ formatTime(lastUpdated) }}</span><button type="button" @click="selectSection('reports')">查看分析 <ArrowUpRight :size="13" /></button></div></article>
+            <article class="panel insight-panel"><header class="panel-heading"><div><div class="panel-kicker"><Sparkles :size="13" />AI 智能洞察</div><h2>值得关注的信号</h2></div><button type="button" class="text-action interactive" @click="selectSection('reports')">全部洞察 <ArrowUpRight :size="13" /></button></header><div class="briefing"><span class="briefing-orb"><BrainCircuit :size="19" /></span><div><small>AI DAILY BRIEFING</small><p>{{ briefingText }}</p></div></div><div class="insight-list"><button v-for="item in insightItems" :key="item.title" type="button" class="insight-row interactive" :class="'insight-' + item.kind" @click="notify(item.detail, item.kind === 'warning' ? 'warning' : 'info')"><i class="insight-symbol"><component :is="item.icon" :size="15" /></i><span class="insight-body"><span class="insight-row-meta"><em>{{ item.label }}</em><small>{{ item.time }}</small></span><strong>{{ item.title }}</strong><small>{{ item.detail }}</small></span><ArrowUpRight :size="14" class="insight-arrow" /></button></div><button type="button" class="weekly-link interactive" @click="selectSection('reports')"><span><Lightbulb :size="14" />{{ liveAgentReady ? "真实数据源与证据链已就绪" : "演示数据包含 " + demoSummary.totals.order_count + " 笔可追溯订单" }}</span><ArrowUpRight :size="14" /></button></article>
           </section>
-          <section class="query-dock" :class="{ analyzing: isAnalyzing }"><div class="query-head"><div class="query-title"><span><Sparkles :size="14" /></span><strong>问问你的数据</strong><em>AI POWERED</em></div><button type="button" class="query-source interactive" @click="openDatasources"><Database :size="13" />{{ datasourceLabel }}<ChevronDown :size="13" /></button></div><div class="query-input-row"><textarea ref="queryInput" v-model="question" rows="1" aria-label="输入数据分析问题" placeholder="试试问：截至 10 月 29 日，各区域营收占比和回款情况如何？" @keydown.enter.exact.prevent="submitQuestion" /><div class="query-tools"><button type="button" class="add-question interactive" title="上传数据" @click="openUpload"><Plus :size="17" /></button><i /><button type="button" class="send-button interactive" :disabled="!question.trim() || isAnalyzing" :aria-label="isAnalyzing ? '正在分析' : '发送问题'" @click="submitQuestion"><span v-if="isAnalyzing" class="spinner" /><Send v-else :size="15" /></button></div></div><div class="query-foot"><div class="prompt-list"><span>试试</span><button v-for="prompt in prompts" :key="prompt" type="button" class="prompt-chip interactive" @click="setPrompt(prompt)">{{ prompt }}</button></div><span class="secure-note"><ShieldCheck :size="12" />只读分析 · 数据安全</span></div></section>
+          <section class="query-dock" :class="{ analyzing: isAnalyzing }"><div class="query-head"><div class="query-title"><span><Sparkles :size="14" /></span><strong>问问你的数据</strong><em>AI POWERED</em></div><select v-if="readyDatasources.length > 1" v-model="preferredDatasourceId" class="query-source query-source-select" aria-label="选择分析数据源"><option v-for="item in readyDatasources" :key="item.id" :value="item.id">{{ item.name }}</option></select><button v-else type="button" class="query-source interactive" @click="openDatasources"><Database :size="13" />{{ datasourceLabel }}<ChevronDown :size="13" /></button></div><div class="query-input-row"><textarea ref="queryInput" v-model="question" rows="1" aria-label="输入数据分析问题" placeholder="试试问：对比 5 月和 6 月的营销转化表现，并给出原因和建议。" @keydown.enter.exact.prevent="submitQuestion" /><div class="query-tools"><button type="button" class="add-question interactive" title="上传数据" @click="openUpload"><Plus :size="17" /></button><i /><button type="button" class="send-button interactive" :disabled="!question.trim() || isAnalyzing" :aria-label="isAnalyzing ? '正在分析' : '发送问题'" @click="submitQuestion"><span v-if="isAnalyzing" class="spinner" /><Send v-else :size="15" /></button></div></div><div class="query-foot"><div class="prompt-list"><span>试试</span><button v-for="prompt in prompts" :key="prompt" type="button" class="prompt-chip interactive" @click="setPrompt(prompt)">{{ prompt }}</button></div><span class="secure-note"><ShieldCheck :size="12" />只读分析 · 数据安全</span></div></section>
           <section class="answer-card"><span class="answer-glyph"><Sparkles :size="16" /></span><div class="answer-body"><div><em>{{ isAnalyzing ? "ANALYZING" : "AI INSIGHT" }}</em><span><i />{{ analysisSource }}</span></div><p><strong>{{ latestQuestion }}</strong>{{ aiConclusion }}</p></div><button type="button" class="evidence-button interactive" @click="selectSection('reports')"><ShieldCheck :size="14" />查看证据 <span>↗</span></button></section>
           <section class="bottom-grid">
             <article class="panel channel-panel"><header class="panel-heading compact-heading"><div><div class="panel-kicker">营收构成</div><h2>收入来源分布</h2></div><button type="button" class="menu-button interactive" @click="selectSection('reports')"><MoreHorizontal :size="18" /></button></header><div class="channel-content"><div ref="channelHost" class="channel-chart" role="img" aria-label="营收来源构成环图" /><div class="channel-legend"><button v-for="item in channelLegend" :key="item.name" type="button" class="interactive" @click="notify(item.name + '贡献本月订单金额 ' + item.value, 'info')"><i :class="item.color" />{{ item.name }}<strong>{{ item.value }}</strong></button></div></div></article>
