@@ -175,7 +175,15 @@
 .chart-foot button:hover, .region-foot button:hover { color: #b0edff; }
 .legend-dot { width: 5px; height: 5px; border-radius: 50%; background: #54d3f4; box-shadow: 0 0 6px rgba(84,211,244,.45); }
 .legend-dot.cyan { background: #54d3f4; }
-.insight-panel { padding: 14px 15px 10px; }
+.insight-panel { display: flex; flex-direction: column; overflow: hidden; padding: 14px 15px 10px; }
+.insight-panel > .panel-heading { flex: none; }
+.insight-scroll { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; scrollbar-color: rgba(91, 173, 219, .38) transparent; scrollbar-width: thin; }
+.insight-scroll > .briefing, .insight-scroll > .insight-list { flex: none; }
+.insight-scroll::-webkit-scrollbar { width: 5px; }
+.insight-scroll::-webkit-scrollbar-track { background: transparent; }
+.insight-scroll::-webkit-scrollbar-thumb { border-radius: 999px; background: rgba(91, 173, 219, .28); }
+.insight-scroll:hover::-webkit-scrollbar-thumb { background: rgba(91, 173, 219, .52); }
+.weekly-link { flex: none; }
 .panel-kicker > svg { color: #ae92ff; }
 .text-action { display: flex; align-items: center; gap: 3px; border: 0; background: transparent; color: #70cbe6; font-size: 8px; cursor: pointer; transition: .25s; }
 .text-action:hover { color: #c0f2ff; transform: translateX(2px); }
