@@ -27,7 +27,7 @@
   - DOI：https://doi.org/10.24432/C5F88Q
   - 原始文件：`online_shoppers_intention.csv`
 - 字段：页面浏览与停留（administrative、informational、product_related 及对应 duration）、Google Analytics 指标（bounce_rates、exit_rates、page_values）、访问背景（special_day、month、operating_systems、browser、region、traffic_type、visitor_type、weekend）、购买结果（purchase，布尔值）
-- 格式归一：列名统一为小写下划线；`Month`→`month`、`Weekend`→`weekend` 等；`Revenue`→`purchase`，避免被误读为金额字段
+- 格式归一：列名统一为小写下划线；`Month`→`month` 并统一为三字母月份（`June`→`Jun`）；`Weekend`→`weekend` 等；`Revenue`→`purchase`，避免被误读为金额字段
 - 派生列：`month_num`（1–12）、`weekend_flag`（TRUE=1 / FALSE=0）、`purchased_flag`（购买=1 / 未购买=0）
 - 典型用途：月度购买转化率、流量类型/访客类型/周末效应分析、跳出率与转化关系
 

@@ -567,7 +567,7 @@ class OpenAICompatibleModelClient:
         except RuntimeWaitTimedOut:
             return AgentFailure(
                 code=AgentErrorCode.RUN_OPENING_TIMEOUT,
-                message="Run Opening 模型请求超过阶段时限",
+                message="模型服务响应超时，请稍后重试",
             )
         except Exception as exc:
             if _is_context_length_error(exc):
@@ -582,7 +582,7 @@ class OpenAICompatibleModelClient:
                     "error_type": type(exc).__name__,
                 },
             )
-            return _request_failure("Run Opening 模型请求失败")
+            return _request_failure("模型服务暂时不可用，请稍后重试")
         if not isinstance(response, AIMessage):
             return _opening_invalid_failure()
 

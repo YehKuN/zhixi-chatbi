@@ -27,7 +27,7 @@ RUNTIME_LIMIT_DEFINITIONS = {
         description="准备阶段共享外层窗口",
     ),
     "run_opening_timeout_seconds": RuntimeLimitDefinition(
-        default=60,
+        default=120,
         minimum=10,
         maximum=300,
         env="RUN_OPENING_TIMEOUT_SECONDS",

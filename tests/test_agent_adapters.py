@@ -1473,7 +1473,7 @@ async def test_run_opening_preserves_repair_timeout_instead_of_masking_it() -> N
                 )
             return AgentFailure(
                 code=AgentErrorCode.RUN_OPENING_TIMEOUT,
-                message="Run Opening 模型请求超过阶段时限",
+                message="模型服务响应超时，请稍后重试",
             )
 
     model = RepairTimeoutModel()
@@ -2410,7 +2410,7 @@ def test_run_deadline_reserves_preparation_and_final_answer_windows() -> None:
     deadline = RunDeadline(300)
 
     assert deadline.preparation_remaining_seconds() <= 165
-    assert deadline.preparation_stage_remaining_seconds("run_opening") <= 60
+    assert deadline.preparation_stage_remaining_seconds("run_opening") <= 120
     assert deadline.agent_remaining_seconds() <= 255
     assert deadline.agent_turn_remaining_seconds() <= 120
     assert deadline.final_remaining_seconds() <= 300
