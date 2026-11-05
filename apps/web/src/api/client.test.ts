@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { clearAuthSession, writeAuthSession } from "@/lib/authStorage";
 import { requestBinary, requestJson } from "./client";
 
 describe("requestJson", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    clearAuthSession();
   });
 
   it("returns data from a successful envelope", async () => {
@@ -82,6 +84,38 @@ describe("requestJson", () => {
     }
     const headers = new Headers(call[1]?.headers);
     expect(headers.has("content-type")).toBe(false);
+  });
+
+  it("attaches the bearer token from the stored auth session", async () => {
+    writeAuthSession({
+      token: "token_123",
+      user: {
+        id: "user_1",
+        username: "admin",
+        display_name: "管理员",
+        role: "enterprise_admin",
+        created_at: "2026-11-05T00:00:00Z",
+      },
+      enterprise: {
+        code: "ZX-ABC123",
+        name: "测试企业",
+        industry: null,
+        company_size: null,
+      },
+      expiresAt: null,
+    });
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({ data: null, request_id: "req_5", error: null }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await requestJson("/sessions");
+
+    const call = fetchMock.mock.calls.at(0);
+    if (!call) {
+      throw new Error("Expected requestJson to call fetch");
+    }
+    expect(new Headers(call[1]?.headers).get("authorization")).toBe("Bearer token_123");
   });
 
   it("reads binary Artifact responses and keeps response headers", async () => {

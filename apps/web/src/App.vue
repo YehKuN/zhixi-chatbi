@@ -1,21 +1,51 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { RouterLink, RouterView } from "vue-router";
-import { Activity, BarChart3, Database, FileText, LayoutDashboard, Moon, Settings2, Sun } from "@lucide/vue";
+import { RouterLink, RouterView, useRouter } from "vue-router";
+import {
+  Activity,
+  BarChart3,
+  Database,
+  FileText,
+  LayoutDashboard,
+  LogOut,
+  Moon,
+  Settings2,
+  Sun,
+} from "@lucide/vue";
 import { getHealth, type HealthResponse } from "@/api/client";
 import { useTheme } from "@/lib/theme";
+import { useAuthStore } from "@/stores/authStore";
 
+const router = useRouter();
+const auth = useAuthStore();
 const health = ref<HealthResponse | null>(null);
 const { isDark, toggleTheme } = useTheme();
 const healthLabel = computed(() => health.value?.status ?? "演示模式");
+const profileName = computed(() => auth.user?.display_name ?? "未登录");
+const profileDetail = computed(() =>
+  auth.enterprise ? `${auth.enterprise.name} · ${auth.roleLabel}` : "尚未绑定企业",
+);
 
 onMounted(async () => {
+  const hadToken = auth.isAuthenticated;
+  await auth.refresh();
+  if (hadToken && !auth.isAuthenticated) {
+    await router.replace({
+      path: "/login",
+      query: { redirect: router.currentRoute.value.fullPath },
+    });
+  }
   try {
     health.value = await getHealth();
   } catch {
     health.value = null;
   }
 });
+
+async function handleLogout(): Promise<void> {
+  await auth.logout();
+  await router.replace("/login");
+}
 </script>
 
 <template>
@@ -34,7 +64,11 @@ onMounted(async () => {
         <div class="topbar-date">2026 / 10 / 29 · 周四</div>
         <div class="system-chip"><span class="status-dot" /><span>{{ health ? '系统在线' : '演示模式' }}</span><small>{{ healthLabel }}</small></div>
         <button class="icon-button" type="button" :aria-label="isDark ? '切换浅色主题' : '切换深色主题'" @click="toggleTheme"><Sun v-if="isDark" :size="16" /><Moon v-else :size="16" /></button>
-        <div class="profile-chip"><span class="profile-avatar">Y</span><span>运营分析师</span></div>
+        <div class="profile-chip">
+          <span class="profile-avatar">{{ auth.avatarText }}</span>
+          <span class="profile-copy"><strong>{{ profileName }}</strong><small>{{ profileDetail }}</small></span>
+          <button class="profile-logout" type="button" aria-label="退出登录" title="退出登录" @click="handleLogout"><LogOut :size="14" /></button>
+        </div>
       </div>
     </header>
     <main class="app-content"><RouterView /></main>

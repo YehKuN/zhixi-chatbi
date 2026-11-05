@@ -7,6 +7,7 @@ from typing import Annotated
 
 from application.agent_ports import DataLinkMcpPort
 from application.artifacts import ArtifactStore
+from application.auth_service import AuthContext, AuthService
 from application.datalink_client import DataLinkManagementPort
 from application.datalink_preview import DataLinkPreviewService
 from application.datalink_validation import DataLinkValidationService
@@ -19,9 +20,11 @@ from application.model_profiles import ModelProfileService
 from application.script_workspace import SessionWorkspaceManager
 from application.secret_cipher import SecretCipher
 from application.sessions import SessionService
+from contracts.errors import AppError, ErrorCode
 from fastapi import Depends, Request
 from metadata.repositories import (
     ArtifactRepository,
+    AuthRepository,
     DataLinkValidationRepository,
     DataSourceRepository,
     ModelProfileRepository,
@@ -58,6 +61,29 @@ async def get_db(request: Request) -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+def get_auth_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AuthService:
+    return AuthService(AuthRepository(db))
+
+
+def get_bearer_token(request: Request) -> str:
+    """解析 Authorization: Bearer；缺失或格式错误统一视为未登录。"""
+
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise AppError(ErrorCode.AUTH_REQUIRED, "请先登录后再访问", status_code=401)
+    return token.strip()
+
+
+async def get_auth_context(
+    token: Annotated[str, Depends(get_bearer_token)],
+    service: Annotated[AuthService, Depends(get_auth_service)],
+) -> AuthContext:
+    return await service.authenticate(token)
 
 
 def get_session_service(

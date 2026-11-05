@@ -5,8 +5,8 @@ import type { ECharts, EChartsOption } from "echarts";
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3, BrainCircuit,
   Check, ChevronDown, CircleHelp, Clock3, Database, Download, FileText, Layers,
-  LayoutDashboard, Lightbulb, MessageSquareText, MoreHorizontal, Plus, RefreshCw,
-  Send, ShieldCheck, Sparkles, TrendingUp, Upload, Wallet,
+  LayoutDashboard, Lightbulb, LogOut, MessageSquareText, MoreHorizontal, Plus, RefreshCw,
+  Send, Settings2, ShieldCheck, Sparkles, TrendingUp, Upload, Wallet,
 } from "@lucide/vue";
 import { useRouter } from "vue-router";
 import { getArtifactContent } from "@/api/artifacts";
@@ -15,6 +15,7 @@ import { getDatasetOverview } from "@/api/datasources";
 import { listRunArtifacts } from "@/api/runs";
 import type { DatasetOverview, Run, Scalar, TableData } from "@/api/types";
 import { useDatasourceStore } from "@/stores/datasourceStore";
+import { useAuthStore } from "@/stores/authStore";
 import { useModelStore } from "@/stores/modelStore";
 import { useRunStore } from "@/stores/runStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -38,6 +39,7 @@ interface ReportChartPayload {
 }
 
 const router = useRouter();
+const auth = useAuthStore();
 const datasources = useDatasourceStore();
 const models = useModelStore();
 const sessions = useSessionStore();
@@ -70,6 +72,7 @@ const followupQuestion = ref("");
 const followupPending = ref(false);
 const followupError = ref<string | null>(null);
 const followupInput = ref<HTMLTextAreaElement | null>(null);
+const profileOpen = ref(false);
 const submittedFrom = ref<"dashboard" | "followup">("dashboard");
 const pendingFollowupQuestion = ref("");
 let trendChart: ECharts | null = null;
@@ -819,6 +822,11 @@ function showAlerts() {
 }
 function openDatasources() { void router.push("/datasources"); }
 function openModelSettings() { void router.push("/settings/model"); }
+async function handleLogout() {
+  profileOpen.value = false;
+  await auth.logout();
+  await router.push("/login");
+}
 function openUpload() { fileInput.value?.click(); }
 async function handleFileSelected(event: Event) {
   const target = event.currentTarget;
@@ -914,7 +922,7 @@ onBeforeUnmount(() => {
       <div class="side-divider" />
       <div class="side-label side-label-actions"><span>数据资源</span><button type="button" class="tiny-icon interactive" title="导入数据" @click="openUpload"><Plus :size="14" /></button></div>
       <button type="button" class="source-link interactive" @click="openDatasources"><i class="source-dot" /><span class="source-copy"><strong>{{ datasourceLabel }}</strong><small>{{ datasourceMeta }}</small></span><MoreHorizontal :size="15" class="dim" /></button>
-      <div class="side-bottom"><div class="engine-card"><div class="engine-heading"><span class="engine-icon"><Sparkles :size="13" /></span><strong>AI 分析引擎</strong><em>{{ liveAgentReady ? "LIVE" : "待配置" }}</em></div><p>{{ liveAgentReady ? activeModel?.model_name + " · 已激活" : "连接真实数据并激活模型" }}</p><div class="engine-meter"><i /></div><small>{{ liveAgentReady ? "Agent · SQL 网关 · DataLink" : "尚未具备真实分析条件" }}</small></div><button type="button" class="profile-link interactive" @click="openModelSettings"><span class="avatar">Y</span><span><strong>运营分析师</strong><small>企业工作空间</small></span><MoreHorizontal :size="16" /></button></div>
+      <div class="side-bottom"><div class="engine-card"><div class="engine-heading"><span class="engine-icon"><Sparkles :size="13" /></span><strong>AI 分析引擎</strong><em>{{ liveAgentReady ? "LIVE" : "待配置" }}</em></div><p>{{ liveAgentReady ? activeModel?.model_name + " · 已激活" : "连接真实数据并激活模型" }}</p><div class="engine-meter"><i /></div><small>{{ liveAgentReady ? "Agent · SQL 网关 · DataLink" : "尚未具备真实分析条件" }}</small></div><div class="profile-wrap"><div v-if="profileOpen" class="profile-backdrop" @click="profileOpen = false" /><div v-if="profileOpen" class="profile-popover"><div class="profile-popover-head"><span class="avatar">{{ auth.avatarText }}</span><span class="profile-popover-name"><strong>{{ auth.user?.display_name ?? "未登录" }}</strong><small>{{ auth.roleLabel }} · {{ auth.user?.username ?? "-" }}</small></span></div><div class="profile-row"><span>所属企业</span><strong>{{ auth.enterprise?.name ?? "未绑定企业" }}</strong></div><div class="profile-row"><span>企业 ID</span><strong class="profile-code">{{ auth.enterprise?.code ?? "-" }}</strong></div><button type="button" class="profile-menu-link interactive" @click="openModelSettings"><Settings2 :size="14" />模型与引擎设置</button><button type="button" class="profile-logout-button interactive" @click="handleLogout"><LogOut :size="14" />退出登录</button></div><button type="button" class="profile-link interactive" :class="{ active: profileOpen }" @click="profileOpen = !profileOpen"><span class="avatar">{{ auth.avatarText }}</span><span><strong>{{ auth.user?.display_name ?? "未登录" }}</strong><small>{{ auth.enterprise?.name ?? "未绑定企业" }}</small></span><MoreHorizontal :size="16" /></button></div></div>
     </aside>
 
     <main class="main-area">

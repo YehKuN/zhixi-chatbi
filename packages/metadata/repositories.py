@@ -27,9 +27,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from metadata.models import (
     ArtifactCleanupTaskModel,
     ArtifactModel,
+    AuthSessionModel,
     DataLinkValidationModel,
     DatasourceConversationStateModel,
     DataSourceModel,
+    EnterpriseModel,
     HistoricalAnswerSummaryModel,
     MessageModel,
     ModelProfileModel,
@@ -41,6 +43,7 @@ from metadata.models import (
     SessionPreferencesModel,
     SqlAuditLogModel,
     ToolCallModel,
+    UserModel,
 )
 
 _LIKE_ESCAPE = "\\"
@@ -1472,3 +1475,107 @@ def _schema_structure(schema: dict[str, Any]) -> dict[str, Any]:
             for table in schema.get("tables", [])
         ],
     }
+
+
+class AuthRepository:
+    """企业、成员与登录会话的最小读写集合；密码与令牌规则留在服务层。"""
+
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+
+    async def get_enterprise(self, enterprise_id: str) -> EnterpriseModel | None:
+        return await self.db.get(EnterpriseModel, enterprise_id)
+
+    async def get_enterprise_by_code(self, code: str) -> EnterpriseModel | None:
+        return await self.db.scalar(
+            select(EnterpriseModel).where(EnterpriseModel.code == code)
+        )
+
+    async def get_enterprise_by_name(self, name: str) -> EnterpriseModel | None:
+        return await self.db.scalar(
+            select(EnterpriseModel).where(EnterpriseModel.name == name)
+        )
+
+    async def create_enterprise(
+        self,
+        *,
+        code: str,
+        name: str,
+        industry: str | None,
+        company_size: str | None,
+        contact_name: str,
+        contact_phone: str,
+        contact_email: str | None,
+    ) -> EnterpriseModel:
+        model = EnterpriseModel(
+            id=make_id("enterprise"),
+            code=code,
+            name=name,
+            industry=industry,
+            company_size=company_size,
+            contact_name=contact_name,
+            contact_phone=contact_phone,
+            contact_email=contact_email,
+            status="active",
+        )
+        self.db.add(model)
+        await self.db.flush()
+        return model
+
+    async def get_user_by_username(self, username: str) -> UserModel | None:
+        return await self.db.scalar(
+            select(UserModel).where(UserModel.username == username)
+        )
+
+    async def get_user(self, user_id: str) -> UserModel | None:
+        return await self.db.get(UserModel, user_id)
+
+    async def create_user(
+        self,
+        *,
+        enterprise_id: str,
+        username: str,
+        display_name: str,
+        role: str,
+        password_hash: str,
+    ) -> UserModel:
+        model = UserModel(
+            id=make_id("user"),
+            enterprise_id=enterprise_id,
+            username=username,
+            display_name=display_name,
+            role=role,
+            password_hash=password_hash,
+            status="active",
+        )
+        self.db.add(model)
+        await self.db.flush()
+        return model
+
+    async def create_session(
+        self,
+        *,
+        token_hash: str,
+        user_id: str,
+        expires_at: datetime,
+    ) -> AuthSessionModel:
+        model = AuthSessionModel(
+            id=make_id("auth"),
+            token_hash=token_hash,
+            user_id=user_id,
+            expires_at=expires_at,
+            created_at=datetime.now(UTC),
+        )
+        self.db.add(model)
+        await self.db.flush()
+        return model
+
+    async def get_session_by_token_hash(self, token_hash: str) -> AuthSessionModel | None:
+        return await self.db.scalar(
+            select(AuthSessionModel).where(AuthSessionModel.token_hash == token_hash)
+        )
+
+    async def revoke_session(self, model: AuthSessionModel) -> None:
+        if model.revoked_at is None:
+            model.revoked_at = datetime.now(UTC)
+            await self.db.flush()

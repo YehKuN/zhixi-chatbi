@@ -1,3 +1,5 @@
+import { readAuthToken } from "@/lib/authStorage";
+
 export interface ApiErrorBody {
   code: string;
   message: string;
@@ -82,6 +84,11 @@ function buildHeaders(init?: RequestInit): Headers {
   // 浏览器会为 FormData 自动补充 multipart boundary，不能手动覆盖。
   if (!isFormData && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
+  }
+
+  const token = readAuthToken();
+  if (token !== null && !headers.has("authorization")) {
+    headers.set("authorization", `Bearer ${token}`);
   }
 
   return headers;

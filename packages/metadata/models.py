@@ -498,6 +498,66 @@ class DataLinkValidationModel(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class EnterpriseModel(TimestampMixin, Base):
+    """企业主体；code 是面向用户的公开企业 ID，id 仅内部使用。"""
+
+    __tablename__ = "enterprises"
+
+    id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    code: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    industry: Mapped[str | None] = mapped_column(String(100))
+    company_size: Mapped[str | None] = mapped_column(String(50))
+    contact_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    contact_phone: Mapped[str] = mapped_column(String(40), nullable=False)
+    contact_email: Mapped[str | None] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(
+        String(20), default="active", server_default="active", nullable=False
+    )
+
+
+class UserModel(TimestampMixin, Base):
+    """企业成员账号；用户名全局唯一，经服务层统一小写。"""
+
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('enterprise_admin', 'employee')", name="ck_users_role"
+        ),
+        Index("ix_users_enterprise_id", "enterprise_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    enterprise_id: Mapped[str] = mapped_column(
+        ForeignKey("enterprises.id", ondelete="RESTRICT"), nullable=False
+    )
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), default="active", server_default="active", nullable=False
+    )
+
+
+class AuthSessionModel(Base):
+    """登录会话；只保存 Bearer 令牌的 SHA-256 摘要。"""
+
+    __tablename__ = "auth_sessions"
+    __table_args__ = (Index("ix_auth_sessions_user_id", "user_id"),)
+
+    id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
 class RunDatalinkConsumptionModel(Base):
     """Safe DataLink consumption history for a single Run; never stores raw MCP JSON."""
 
