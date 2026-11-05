@@ -138,6 +138,99 @@ class TableDataRead(BaseModel):
     row_count: int = Field(ge=0)
 
 
+OverviewTone = Literal["cyan", "violet", "blue", "green"]
+
+
+class DatasetMetricRead(BaseModel):
+    """驾驶舱指标卡；value 已按真实口径格式化，spark 来自真实月度序列。"""
+
+    key: str
+    label: str
+    value: str
+    detail: str
+    change: str | None = None
+    change_tone: Literal["up", "down", "flat"] = "flat"
+    tone: OverviewTone = "cyan"
+    spark: list[float] = Field(default_factory=list)
+
+
+class DatasetTrendSeriesRead(BaseModel):
+    name: str
+    kind: Literal["line", "bar"] = "line"
+    axis: Literal["count", "rate"] = "count"
+    values: list[float]
+
+
+class DatasetTrendRead(BaseModel):
+    title: str
+    subtitle: str
+    labels: list[str]
+    series: list[DatasetTrendSeriesRead]
+
+
+class DatasetGroupItemRead(BaseModel):
+    name: str
+    count: int = Field(ge=0)
+    positives: int | None = Field(default=None, ge=0)
+    share_pct: float = Field(ge=0)
+    conversion_pct: float | None = None
+
+
+class DatasetGroupRead(BaseModel):
+    title: str
+    column: str
+    label: str
+    metric_label: str = "占比"
+    items: list[DatasetGroupItemRead]
+
+
+class DatasetAlertRead(BaseModel):
+    level: Literal["warning", "info"]
+    title: str
+    detail: str
+
+
+class DatasetInsightRead(BaseModel):
+    kind: Literal["positive", "warning", "neutral"]
+    label: str
+    title: str
+    detail: str
+
+
+class DatasetQualityRead(BaseModel):
+    non_null_pct: float = Field(ge=0, le=100)
+    missing_cells: int = Field(ge=0)
+    numeric_columns: int = Field(ge=0)
+    categorical_columns: int = Field(ge=0)
+    boolean_columns: int = Field(ge=0)
+
+
+class DatasetOverviewRead(BaseModel):
+    """由真实数据源即时聚合出的驾驶舱概览，不包含任何示例数据。"""
+
+    datasource_id: str
+    datasource_name: str
+    datasource_type: str
+    table: str
+    row_count: int = Field(ge=0)
+    column_count: int = Field(ge=0)
+    schema_revision: int = Field(ge=0)
+    target_column: str | None = None
+    target_label: str | None = None
+    conversion_pct: float | None = None
+    period_label: str
+    updated_at: datetime
+    metrics: list[DatasetMetricRead]
+    trend: DatasetTrendRead | None = None
+    distribution: DatasetGroupRead | None = None
+    ranking: DatasetGroupRead | None = None
+    alerts: list[DatasetAlertRead]
+    insights: list[DatasetInsightRead]
+    quality: DatasetQualityRead
+    prompts: list[str]
+    briefing: str
+
+
 class SqlExecutionRead(TableDataRead):
     audit_log_id: str
     artifact_id: str | None

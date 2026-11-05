@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from application.datalink_client import DataLinkClient, DataLinkClientError, DataLinkManagementPort
+from application.dataset_overview import OverviewCache
 from application.datasources import DataSourceService
 from application.run_runtime import RunRuntimeService
 from contracts.errors import AppError
@@ -53,6 +54,7 @@ def create_app(
     )
     run_event_notifier = RunEventNotifier()
     validation_cancels = ValidationCancelRegistry()
+    overview_cache = OverviewCache()
 
     def build_runtime(db, events) -> RunRuntimeService:
         return RunRuntimeService(
@@ -110,6 +112,7 @@ def create_app(
     app.state.run_event_notifier = run_event_notifier
     app.state.run_executor = run_executor
     app.state.run_lifecycle = run_lifecycle
+    app.state.overview_cache = overview_cache
 
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(

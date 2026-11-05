@@ -11,6 +11,7 @@ from application.datalink_client import DataLinkManagementPort
 from application.datalink_preview import DataLinkPreviewService
 from application.datalink_validation import DataLinkValidationService
 from application.datalink_versions import DataLinkVersionsService
+from application.dataset_overview import DatasetOverviewService
 from application.datasource_factory import build_datasource_service
 from application.datasources import DataSourceService
 from application.model_capability_probe import LangChainModelCapabilityProbe
@@ -140,6 +141,18 @@ def get_datasource_service(
         settings,
         datalink_client=request.app.state.datalink_client,
         run_lifecycle=request.app.state.run_lifecycle,
+    )
+
+
+def get_dataset_overview_service(
+    request: Request,
+    datasources: Annotated[DataSourceService, Depends(get_datasource_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> DatasetOverviewService:
+    return DatasetOverviewService(
+        datasources,
+        request.app.state.overview_cache,
+        query_timeout_seconds=settings.query_timeout_seconds,
     )
 
 

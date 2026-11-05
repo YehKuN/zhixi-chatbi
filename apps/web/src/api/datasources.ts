@@ -28,6 +28,7 @@ import type {
   DataLinkSubgraph,
   DataSource,
   DataSourceDeleteResult,
+  DatasetOverview,
   DataSourceTypeDescriptor,
   PageResult,
   SchemaSummary,
@@ -102,6 +103,13 @@ export function updateDatasourceDescription(
 
 export function getDatasourceSchema(datasourceId: string): Promise<SchemaSummary> {
   return requestJson<SchemaSummary>(`/datasources/${encodeURIComponent(datasourceId)}/schema`);
+}
+
+export function getDatasetOverview(datasourceId: string, refresh = false): Promise<DatasetOverview> {
+  const query = refresh ? "?refresh=true" : "";
+  return requestJson<DatasetOverview>(
+    `/datasources/${encodeURIComponent(datasourceId)}/overview${query}`,
+  );
 }
 
 export function previewDatasourceTable(

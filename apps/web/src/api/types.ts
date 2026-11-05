@@ -297,6 +297,92 @@ export interface DataSourceDescriptionUpdate {
   description: string | null;
 }
 
+export interface DatasetMetric {
+  key: string;
+  label: string;
+  value: string;
+  detail: string;
+  change: string | null;
+  change_tone: "up" | "down" | "flat";
+  tone: "cyan" | "violet" | "blue" | "green";
+  spark: number[];
+}
+
+export interface DatasetTrendSeries {
+  name: string;
+  kind: "line" | "bar";
+  axis: "count" | "rate";
+  values: number[];
+}
+
+export interface DatasetTrend {
+  title: string;
+  subtitle: string;
+  labels: string[];
+  series: DatasetTrendSeries[];
+}
+
+export interface DatasetGroupItem {
+  name: string;
+  count: number;
+  positives: number | null;
+  share_pct: number;
+  conversion_pct: number | null;
+}
+
+export interface DatasetGroup {
+  title: string;
+  column: string;
+  label: string;
+  metric_label: string;
+  items: DatasetGroupItem[];
+}
+
+export interface DatasetAlert {
+  level: "warning" | "info";
+  title: string;
+  detail: string;
+}
+
+export interface DatasetInsight {
+  kind: "positive" | "warning" | "neutral";
+  label: string;
+  title: string;
+  detail: string;
+}
+
+export interface DatasetQuality {
+  non_null_pct: number;
+  missing_cells: number;
+  numeric_columns: number;
+  categorical_columns: number;
+  boolean_columns: number;
+}
+
+export interface DatasetOverview {
+  datasource_id: string;
+  datasource_name: string;
+  datasource_type: string;
+  table: string;
+  row_count: number;
+  column_count: number;
+  schema_revision: number;
+  target_column: string | null;
+  target_label: string | null;
+  conversion_pct: number | null;
+  period_label: string;
+  updated_at: string;
+  metrics: DatasetMetric[];
+  trend: DatasetTrend | null;
+  distribution: DatasetGroup | null;
+  ranking: DatasetGroup | null;
+  alerts: DatasetAlert[];
+  insights: DatasetInsight[];
+  quality: DatasetQuality;
+  prompts: string[];
+  briefing: string;
+}
+
 export interface DataSource {
   id: string;
   name: string;

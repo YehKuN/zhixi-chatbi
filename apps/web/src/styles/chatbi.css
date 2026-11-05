@@ -263,7 +263,7 @@
 .channel-legend button { display: grid; grid-template-columns: 6px minmax(0,1fr) auto; align-items: center; gap: 6px; border: 0; border-radius: 4px; background: transparent; padding: 3px 2px; color: #879bb4; font-size: 8px; text-align: left; cursor: pointer; transition: .28s; }
 .channel-legend button:hover { background: rgba(63, 110, 146, .14); color: #d2eafa; transform: translateX(2px); }
 .channel-legend i { width: 5px; height: 5px; border-radius: 2px; background: #51d1ed; }
-.channel-legend i.blue { background: #718aff; }.channel-legend i.violet { background: #a17aff; }.channel-legend i.green { background: #45d6a4; }
+.channel-legend i.blue { background: #718aff; }.channel-legend i.violet { background: #a17aff; }.channel-legend i.green { background: #45d6a4; }.channel-legend i.amber { background: #f2b566; }
 .channel-legend strong { color: #b2c5d8; font-family: "DM Mono", monospace; font-size: 8px; font-weight: 500; }
 .range-mini { display: flex; align-items: center; gap: 4px; border: 1px solid rgba(100, 149, 188, .15); border-radius: 5px; background: rgba(18, 38, 60, .48); padding: 4px 6px; color: #8296b0; font-size: 7px; cursor: pointer; transition: .28s; }
 .range-mini:hover { border-color: rgba(79, 193, 228, .34); color: #c1eafa; }
@@ -286,6 +286,17 @@
 .amber-alert > em { border-color: rgba(234, 179, 95, .17); color: #e5be7e; }
 .alert-foot { display: flex; justify-content: space-between; margin-top: 10px; color: #71859e; font-size: 7px; }
 .alert-foot > span { display: flex; align-items: center; gap: 5px; }.alert-foot > span i { width: 4px; height: 4px; border-radius: 50%; background: #3bcfa5; box-shadow: 0 0 5px #3bcfa5; }
+.data-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 140px; border: 1px dashed rgba(100, 161, 201, .18); border-radius: 9px; background: rgba(10, 26, 44, .35); padding: 20px; color: #7c90aa; font-size: 9px; text-align: center; }
+.data-empty > svg { color: #6fd4f2; opacity: .85; }
+.data-empty strong { color: #c7d8e9; font-size: 10px; font-weight: 600; }
+.data-empty span { max-width: 560px; line-height: 1.7; }
+.data-empty .outline-action { margin-top: 4px; }
+.overview-empty { min-height: 118px; margin-bottom: 10px; }
+.chart-empty { border: 0; background: transparent; }
+.channel-empty, .alert-empty { height: 146px; min-height: 0; border: 0; background: transparent; }
+.alert-empty { height: auto; margin-top: 12px; font-size: 8px; }
+.table-empty { min-height: 160px; border: 0; background: transparent; }
+.finance-empty { min-height: 320px; }
 .page-footer { display: flex; justify-content: space-between; margin-top: 12px; color: #61758e; font-size: 7px; }
 .page-footer i { margin: 0 3px; color: #4d627a; font-style: normal; }.page-footer > span:last-child { display: flex; align-items: center; gap: 4px; }
 .page-footer b { color: #465c76; font-weight: 400; }.footer-agent { width: 4px; height: 4px; margin-left: 3px !important; border-radius: 50%; background: #41d3a8; box-shadow: 0 0 6px #41d3a8; }

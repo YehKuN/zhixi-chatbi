@@ -6,6 +6,7 @@ from agent_runtime.ports import CancellationSignal
 from application.datalink_preview import DataLinkPreviewService
 from application.datalink_validation import DataLinkValidationService
 from application.datalink_versions import DataLinkVersionsService
+from application.dataset_overview import DatasetOverviewService
 from application.datasources import DataSourceService
 from contracts.api import ApiEnvelope, Page, PageResult
 from contracts.datalink import (
@@ -38,6 +39,7 @@ from contracts.datalink import (
     DataLinkVersionsRead,
 )
 from contracts.datasources import (
+    DatasetOverviewRead,
     DataSourceConnectionCreate,
     DataSourceConnectionUpdate,
     DataSourceDeleteResult,
@@ -66,6 +68,7 @@ from server.dependencies import (
     get_datalink_preview_service,
     get_datalink_validation_service,
     get_datalink_versions_service,
+    get_dataset_overview_service,
     get_datasource_service,
     get_request_cancellation,
     inspect_datasource_in_background,
@@ -74,6 +77,7 @@ from server.responses import success_response
 
 router = APIRouter(tags=["datasources"])
 DataSourceServiceDep = Annotated[DataSourceService, Depends(get_datasource_service)]
+DatasetOverviewDep = Annotated[DatasetOverviewService, Depends(get_dataset_overview_service)]
 DataLinkVersionsDep = Annotated[DataLinkVersionsService, Depends(get_datalink_versions_service)]
 DataLinkValidationDep = Annotated[
     DataLinkValidationService, Depends(get_datalink_validation_service)
@@ -391,6 +395,23 @@ async def get_datasource_schema(
     """返回上次检查固化的 Schema，不会临时扫描或暴露原始文件。"""
 
     return success_response(request, await service.get_schema(datasource_id))
+
+
+@router.get(
+    "/datasources/{datasource_id}/overview",
+    response_model=ApiEnvelope[DatasetOverviewRead],
+)
+async def get_dataset_overview(
+    request: Request,
+    datasource_id: str,
+    service: DatasetOverviewDep,
+    refresh: bool = Query(default=False),
+):
+    """返回驾驶舱所需的真实聚合概览，所有指标均由当前数据源即时计算。"""
+
+    return success_response(
+        request, await service.get(datasource_id, refresh=refresh)
+    )
 
 
 @router.patch(
