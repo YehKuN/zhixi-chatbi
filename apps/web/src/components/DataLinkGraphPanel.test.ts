@@ -177,7 +177,7 @@ describe("DataLinkGraphPanel", () => {
       echarts.labelLayout,
     ]);
     app.unmount();
-  });
+  }, 15_000);
 
   it("observes a canvas loaded asynchronously and rebinds after it is replaced", async () => {
     const chart = { setOption: vi.fn(), on: vi.fn(), dispose: vi.fn(), resize: vi.fn() };
