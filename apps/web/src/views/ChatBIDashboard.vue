@@ -9,9 +9,11 @@ import {
   Send, ShieldCheck, Sparkles, TrendingUp, Upload, Wallet,
 } from "@lucide/vue";
 import { useRouter } from "vue-router";
+import { getArtifactContent } from "@/api/artifacts";
 import { buildApiUrl } from "@/api/client";
 import { getDatasetOverview } from "@/api/datasources";
-import type { DatasetOverview } from "@/api/types";
+import { listRunArtifacts } from "@/api/runs";
+import type { DatasetOverview, Run, Scalar, TableData } from "@/api/types";
 import { useDatasourceStore } from "@/stores/datasourceStore";
 import { useModelStore } from "@/stores/modelStore";
 import { useRunStore } from "@/stores/runStore";
@@ -27,6 +29,12 @@ interface InsightCard {
   title: string;
   detail: string;
   time: string;
+}
+
+interface ReportChartPayload {
+  option: EChartsOption;
+  summary: string;
+  note: string;
 }
 
 const router = useRouter();
@@ -54,10 +62,24 @@ const preferredDatasourceId = ref<string | null>(null);
 const trendHost = ref<HTMLElement | null>(null);
 const channelHost = ref<HTMLElement | null>(null);
 const regionHost = ref<HTMLElement | null>(null);
+const reportChartHost = ref<HTMLElement | null>(null);
+const reportChartPayload = ref<ReportChartPayload | null>(null);
+const reportChartLoading = ref(false);
+const reportChartNote = ref("完成一次真实分析后，会从查询结果自动生成图表");
+const followupQuestion = ref("");
+const followupPending = ref(false);
+const followupError = ref<string | null>(null);
+const followupInput = ref<HTMLTextAreaElement | null>(null);
+const submittedFrom = ref<"dashboard" | "followup">("dashboard");
+const pendingFollowupQuestion = ref("");
 let trendChart: ECharts | null = null;
 let channelChart: ECharts | null = null;
 let regionChart: ECharts | null = null;
+let reportChart: ECharts | null = null;
 let resizeObserver: ResizeObserver | null = null;
+let reportResizeObserver: ResizeObserver | null = null;
+let reportChartRunId: string | null = null;
+let reportAutoOpened = false;
 let toastTimer: number | null = null;
 let overviewRequest = 0;
 let loadedDatasourceId: string | null = null;
@@ -191,6 +213,16 @@ const ledgerNote = computed(() => {
   const confirmed = readyDatasources.value.length;
   return "当前共 " + ledgerRows.value.length + " 个数据资产，其中 " + confirmed + " 个已完成 Schema 检查与遮蔽字段确认，可直接用于智能问数与证据链分析。";
 });
+const reportRun = computed<Run | null>(() => {
+  const live = runs.currentRun;
+  if (live?.status === "succeeded" && live.session_id === sessions.currentSession?.id) return live;
+  return sessions.runs.find((run) => run.status === "succeeded") ?? null;
+});
+const followupMessages = computed(() =>
+  sessions.messages.filter((message) => message.content_text.trim()).slice(-6),
+);
+const followupContext = computed(() => sessions.currentSession?.title ?? "尚无分析会话");
+const followupReady = computed(() => liveAgentReady.value && sessions.currentSession !== null);
 
 function notify(message: string, kind: ToastKind = "success") {
   toast.value = { message, kind };
@@ -220,6 +252,23 @@ function selectSection(section: Section) {
       // 立即回顶：同时取消可能仍在运行的平滑滚动，避免滚轮上滑被动画锁住。
       container.scrollTo({ top: 0, behavior: "auto" });
       container.scrollTop = 0;
+    });
+  } else {
+    queryInput.value?.blur();
+    void nextTick(async () => {
+      const container = pageScroll.value;
+      if (container) {
+        container.scrollTo({ top: 0, behavior: "auto" });
+        container.scrollTop = 0;
+      }
+      if (section === "reports") {
+        if (!reportAutoOpened && sessions.currentSession === null && reportRows.value.length > 0) {
+          reportAutoOpened = true;
+          await openReport(reportRows.value[0].id);
+        } else {
+          await loadReportChart();
+        }
+      }
     });
   }
 }
@@ -428,6 +477,228 @@ function initCharts() {
     [trendHost.value, channelHost.value, regionHost.value].forEach((host) => { if (host) resizeObserver?.observe(host); });
   }
 }
+const monthDisplayLabels: Record<string, string> = {
+  jan: "1月", feb: "2月", mar: "3月", apr: "4月", may: "5月", jun: "6月",
+  jul: "7月", aug: "8月", sep: "9月", oct: "10月", nov: "11月", dec: "12月",
+};
+const reportColumnLabels: Record<string, string> = {
+  month: "月份",
+  month_num: "月份序号",
+  sessions: "会话数",
+  conversion_rate: "转化率",
+  conv_rate: "转化率",
+  page_value_bucket: "页面价值分桶",
+  avg_page_value: "平均页面价值",
+  corr: "相关系数",
+  diff_pp: "差值（百分点）",
+  rel_change: "相对变化",
+  better_month: "更高月份",
+  traffic_type: "流量类型",
+  visitor_type: "访客类型",
+  region: "区域",
+  browser: "浏览器",
+  operating_systems: "操作系统",
+  administrative: "行政页面数",
+  product_related: "产品页浏览数",
+  bounce_rates: "跳出率",
+  exit_rates: "退出率",
+  special_day: "特殊日期",
+};
+const shortCodeLabels: Record<string, string> = {
+  traffic_type: "类型",
+  region: "区域",
+  browser: "浏览器",
+  operating_systems: "系统",
+};
+function reportColumnLabel(name: string) {
+  return reportColumnLabels[name] ?? name;
+}
+function reportValueLabel(column: string, value: Scalar, index: number) {
+  if (value === null || value === undefined || value === "") return String(index + 1);
+  if (column === "month") {
+    const key = String(value).slice(0, 3).toLowerCase();
+    return monthDisplayLabels[key] ?? String(value);
+  }
+  const short = shortCodeLabels[column];
+  if (short !== undefined && typeof value === "number") return short + " " + value;
+  return String(value);
+}
+function numericColumnIndexes(table: TableData) {
+  return table.columns.map((_, index) => index).filter((index) =>
+    table.rows.some((row) => typeof row[index] === "number") &&
+    table.rows.every((row) => row[index] === null || typeof row[index] === "number"),
+  );
+}
+function isRateColumn(table: TableData, index: number) {
+  if (!/rate|ratio|pct|percent|share|conversion|率|占比/i.test(table.columns[index])) return false;
+  const values = table.rows.map((row) => Number(row[index])).filter(Number.isFinite);
+  return values.length > 0 && Math.max(...values.map((value) => Math.abs(value))) <= 1.5;
+}
+function chartScore(table: TableData) {
+  if (table.rows.length < 2) return -1;
+  const numeric = numericColumnIndexes(table);
+  if (numeric.length === 0) return -1;
+  const categorical = table.columns.length - numeric.length;
+  return Math.min(table.rows.length, 24) * 2 + numeric.length * 3 + (categorical > 0 ? 6 : 0);
+}
+function buildReportChart(table: TableData): ReportChartPayload | null {
+  if (table.rows.length < 2) return null;
+  const numeric = numericColumnIndexes(table);
+  const categorical = table.columns.map((_, index) => index).filter((index) => !numeric.includes(index));
+  const xIndex = categorical.length > 0 ? categorical[0] : numeric.length >= 2 ? numeric[0] : -1;
+  if (xIndex < 0) return null;
+  const seriesIndexes = numeric.filter((index) => index !== xIndex);
+  if (seriesIndexes.length === 0) return null;
+  const rateIndex = seriesIndexes.find((index) => isRateColumn(table, index));
+  const valueIndex = seriesIndexes.find((index) => !isRateColumn(table, index));
+  if (rateIndex === undefined && valueIndex === undefined) return null;
+
+  const rows = table.rows.slice(0, 24);
+  const labels = rows.map((row, index) => reportValueLabel(table.columns[xIndex], row[xIndex], index));
+  const valueValues = valueIndex === undefined ? null : rows.map((row) => Number(row[valueIndex]));
+  const rateValues = rateIndex === undefined ? null : rows.map((row) => Number(row[rateIndex]) * 100);
+  const rateNames = new Set<string>();
+  if (rateValues !== null && rateIndex !== undefined) {
+    rateNames.add(reportColumnLabel(table.columns[rateIndex]));
+  }
+  const series: Array<Record<string, unknown>> = [];
+  if (valueValues !== null && valueIndex !== undefined) {
+    series.push({
+      name: reportColumnLabel(table.columns[valueIndex]),
+      type: "bar",
+      yAxisIndex: 0,
+      data: valueValues,
+      barWidth: 18,
+      itemStyle: {
+        borderRadius: [4, 4, 0, 0],
+        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: "#43d7f5" },
+          { offset: 1, color: "rgba(45,186,255,.16)" },
+        ]),
+      },
+    });
+  }
+  if (rateValues !== null && rateIndex !== undefined) {
+    series.push({
+      name: reportColumnLabel(table.columns[rateIndex]),
+      type: "line",
+      yAxisIndex: valueValues === null ? 0 : 1,
+      data: rateValues,
+      smooth: true,
+      symbol: "circle",
+      symbolSize: 5,
+      lineStyle: { width: 2.2, color: "#a08cff" },
+      itemStyle: { color: "#b6a4ff" },
+    });
+  }
+  const hasRate = rateValues !== null;
+  const hasValue = valueValues !== null;
+  const rateMax = Math.max(5, Math.ceil(Math.max(0, ...(rateValues ?? [0])) / 5) * 5);
+  const yAxis = hasRate && hasValue
+    ? [
+        { type: "value" as const, min: 0, splitNumber: 3, axisLabel: { color: "#6f829d", fontSize: 8 }, splitLine: { lineStyle: { color: "rgba(104,153,199,.1)", type: "dashed" as const } }, axisLine: { show: false } },
+        { type: "value" as const, min: 0, max: rateMax, splitNumber: 3, axisLabel: { color: "#8b7fd8", fontSize: 8, formatter: "{value}%" }, splitLine: { show: false }, axisLine: { show: false } },
+      ]
+    : [
+        hasRate
+          ? { type: "value" as const, min: 0, max: rateMax, splitNumber: 3, axisLabel: { color: "#8b7fd8", fontSize: 8, formatter: "{value}%" }, splitLine: { lineStyle: { color: "rgba(104,153,199,.1)", type: "dashed" as const } }, axisLine: { show: false } }
+          : { type: "value" as const, min: 0, splitNumber: 3, axisLabel: { color: "#6f829d", fontSize: 8 }, splitLine: { lineStyle: { color: "rgba(104,153,199,.1)", type: "dashed" as const } }, axisLine: { show: false } },
+      ];
+  const seriesNames = series.map((item) => String(item.name));
+  const summary = reportColumnLabel(table.columns[xIndex]) + " · " + seriesNames.join(" × ");
+  const note = "来自本次查询结果 · " + table.row_count + " 行 · " +
+    table.columns.map(reportColumnLabel).join(" / ");
+  const option: EChartsOption = {
+    animationDuration: 800,
+    grid: { left: 2, right: hasRate && hasValue ? 30 : 8, top: series.length > 1 ? 22 : 10, bottom: 4, containLabel: true },
+    legend: series.length > 1
+      ? { top: 0, right: 0, itemWidth: 7, itemHeight: 7, textStyle: { color: "#8091ad", fontSize: 8 }, data: seriesNames }
+      : { show: false },
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: "rgba(8,19,39,.96)",
+      borderColor: "rgba(77,190,255,.25)",
+      textStyle: { color: "#e6f4ff", fontSize: 10 },
+      formatter: (raw: unknown) => {
+        const items = raw as Array<{ axisValueLabel?: string; marker: string; seriesName: string; value: number }>;
+        const head = items[0]?.axisValueLabel ?? "";
+        const lines = items.map((item) => item.marker + item.seriesName + "：" +
+          Number(item.value).toLocaleString("zh-CN", { maximumFractionDigits: 1 }) +
+          (rateNames.has(item.seriesName) ? "%" : ""));
+        return [head, ...lines].join("<br/>");
+      },
+    },
+    xAxis: {
+      type: "category",
+      name: reportColumnLabel(table.columns[xIndex]),
+      nameTextStyle: { color: "#7d90a8", fontSize: 8 },
+      data: labels,
+      axisLine: { lineStyle: { color: "rgba(120,165,206,.18)" } },
+      axisTick: { show: false },
+      axisLabel: { color: "#7486a1", fontSize: 8, margin: 7, rotate: labels.length > 8 ? 24 : 0, interval: 0 },
+    },
+    yAxis,
+    series,
+  } as EChartsOption;
+  return { option, summary, note };
+}
+function initReportChart() {
+  reportResizeObserver?.disconnect();
+  reportChart?.dispose();
+  reportChart = null;
+  const payload = reportChartPayload.value;
+  if (payload === null || reportChartHost.value === null) return;
+  reportChart = echarts.init(reportChartHost.value);
+  reportChart.setOption(payload.option, { notMerge: true });
+  if (typeof ResizeObserver !== "undefined") {
+    reportResizeObserver = new ResizeObserver(() => reportChart?.resize());
+    reportResizeObserver.observe(reportChartHost.value);
+  }
+}
+async function loadReportChart() {
+  const run = reportRun.value;
+  if (run === null) {
+    reportChartRunId = null;
+    reportChartPayload.value = null;
+    reportChartNote.value = "完成一次真实分析后，会从查询结果自动生成图表";
+    initReportChart();
+    return;
+  }
+  if (reportChartRunId === run.id && reportChartPayload.value !== null) {
+    await nextTick();
+    initReportChart();
+    return;
+  }
+  reportChartRunId = run.id;
+  reportChartLoading.value = true;
+  try {
+    const artifacts = await listRunArtifacts(run.id);
+    const tables: TableData[] = [];
+    for (const artifact of artifacts.filter((item) => item.type === "table").slice(0, 6)) {
+      const content = await getArtifactContent(artifact.id);
+      try {
+        const parsed = JSON.parse(await content.blob.text()) as TableData;
+        if (Array.isArray(parsed.columns) && Array.isArray(parsed.rows)) tables.push(parsed);
+      } catch {
+        continue;
+      }
+    }
+    const chartable = tables.filter((table) => chartScore(table) >= 0);
+    const best = chartable[chartable.length - 1] ?? null;
+    const payload = best ? buildReportChart(best) : null;
+    reportChartPayload.value = payload;
+    reportChartNote.value = payload?.note ?? (best ? "该查询结果暂不适合生成图表" : "本次运行未返回可绘制的表格结果");
+    await nextTick();
+    initReportChart();
+  } catch (error) {
+    reportChartPayload.value = null;
+    reportChartNote.value = "图表读取失败：" + (error instanceof Error ? error.message : "未知错误");
+    reportChartRunId = null;
+    initReportChart();
+  } finally {
+    reportChartLoading.value = false;
+  }
+}
 function setPrompt(prompt: string) {
   question.value = prompt;
   selectSection("query");
@@ -456,6 +727,7 @@ async function submitQuestion() {
   runInsights.value = null;
   aiConclusion.value = "正在理解业务意图、匹配指标口径并生成查询计划…";
   analysisSource.value = "AI Agent 正在分析真实数据源";
+  submittedFrom.value = "dashboard";
   // 提交后保持当前问数位置，不切回驾驶舱顶部。
   try {
     if (!sessions.currentSession || sessions.currentSession.selected_datasource_id !== source.id) {
@@ -493,7 +765,34 @@ async function openReport(sessionId: string) {
     applyRunInsights(reply.content_text);
   }
   analysisSource.value = "历史分析会话 · 可回放 SQL 与证据链";
+  followupError.value = null;
+  reportChartRunId = null;
+  await loadReportChart();
   notify("已载入历史分析会话");
+}
+async function askFollowUp() {
+  const prompt = followupQuestion.value.trim();
+  if (!prompt || followupPending.value) return;
+  if (!liveAgentReady.value || sessions.currentSession === null) {
+    notify("请先在智能问数中完成一次分析，再基于当前报告追问", "warning");
+    return;
+  }
+  followupError.value = null;
+  followupPending.value = true;
+  pendingFollowupQuestion.value = prompt;
+  followupQuestion.value = "";
+  submittedFrom.value = "followup";
+  try {
+    const runId = await sessions.submitRun(prompt, makeIdempotencyKey());
+    await runs.begin(runId);
+    notify("追问已提交，正在沿用当前会话上下文", "info");
+  } catch (error) {
+    followupPending.value = false;
+    const message = error instanceof Error ? error.message : "追问提交失败";
+    followupError.value = message;
+    submittedFrom.value = "dashboard";
+    notify(message, "warning");
+  }
 }
 function showAlerts() {
   if (alertItems.value.length === 0) {
@@ -523,6 +822,10 @@ watch(activeSection, async (section) => {
 watch(() => runs.currentRun?.status, async (status) => {
   if (status !== "succeeded" && status !== "failed" && status !== "canceled") return;
   isAnalyzing.value = false;
+  followupPending.value = false;
+  pendingFollowupQuestion.value = "";
+  const wasFollowup = submittedFrom.value === "followup";
+  submittedFrom.value = "dashboard";
   if (status === "succeeded") {
     analysisSource.value = "受控分析引擎 · 已完成真实查询并登记产物";
     const sessionId = sessions.currentSession?.id;
@@ -534,9 +837,19 @@ watch(() => runs.currentRun?.status, async (status) => {
         applyRunInsights(reply.content_text);
       }
     }
+    reportChartRunId = null;
+    if (activeSection.value === "reports") await loadReportChart();
     notify("分析完成，结论与证据已更新");
   } else {
-    aiConclusion.value = runs.currentRun?.error_message ?? "本次分析未能完整完成，请检查数据源配置或查看运行详情。";
+    const message = runs.currentRun?.error_message ?? "本次分析未能完整完成，请检查数据源配置或查看运行详情。";
+    if (wasFollowup) {
+      followupError.value = message;
+      const sessionId = sessions.currentSession?.id;
+      if (sessionId) await sessions.select(sessionId);
+      notify("追问未能完成，请查看错误信息", "warning");
+      return;
+    }
+    aiConclusion.value = message;
     analysisSource.value = "运行状态 · 请检查执行记录";
     notify("分析结束，请检查运行状态", "warning");
   }
@@ -552,7 +865,9 @@ watch(preferredDatasourceId, async () => {
 });
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
+  reportResizeObserver?.disconnect();
   trendChart?.dispose(); channelChart?.dispose(); regionChart?.dispose();
+  reportChart?.dispose();
   if (toastTimer !== null) window.clearTimeout(toastTimer);
 });
 </script>
@@ -598,7 +913,8 @@ onBeforeUnmount(() => {
 
         <template v-else-if="activeSection === 'reports'">
           <section class="page-heading module-heading"><div><div class="eyebrow"><i />REAL DATA · EVIDENCE READY</div><h1>洞察报告 <span>一目了然。</span></h1><p>每份分析都包含清晰口径、证据引用和可追溯的运行记录。</p></div><button class="primary-action interactive" type="button" @click="downloadReport"><Download :size="14" />导出最新报告</button></section>
-          <section class="panel report-hero"><div class="report-copy"><span class="report-label"><Sparkles :size="13" />真实数据简报 · {{ overview?.period_label ?? "等待数据源" }}</span><h2>{{ latestQuestion }}</h2><p>{{ aiConclusion }}</p><div class="report-meta"><span><Database :size="13" />{{ analysisSource }}</span><span><ShieldCheck :size="13" />指标由真实数据源即时聚合</span></div><button type="button" class="primary-action interactive" @click="downloadReport"><FileText :size="14" />导出完整报告</button></div><div class="report-art"><i /><i /><span><BrainCircuit :size="31" /></span><em class="art-stat one"><small>Conversion</small><strong>{{ overview?.conversion_pct !== null && overview?.conversion_pct !== undefined ? overview.conversion_pct.toFixed(1) + "%" : "—" }}</strong></em><em class="art-stat two"><small>Records</small><strong>{{ overview ? formatCount(overview.row_count) : "—" }}</strong></em></div></section>
+          <section class="panel report-hero"><div class="report-copy"><span class="report-label"><Sparkles :size="13" />真实数据简报 · {{ overview?.period_label ?? "等待数据源" }}</span><h2>{{ latestQuestion }}</h2><p>{{ aiConclusion }}</p><div class="report-meta"><span><Database :size="13" />{{ analysisSource }}</span><span><ShieldCheck :size="13" />指标由真实数据源即时聚合</span></div><button type="button" class="primary-action interactive" @click="downloadReport"><FileText :size="14" />导出完整报告</button></div><div class="report-art"><div class="report-chart-head"><span><BarChart3 :size="13" />分析图表</span><em>{{ reportChartPayload?.summary ?? "真实查询结果" }}</em></div><div v-if="reportChartPayload" ref="reportChartHost" class="report-chart" role="img" :aria-label="reportChartPayload.summary" /><div v-else class="report-chart-empty"><BarChart3 :size="18" /><span>{{ reportChartLoading ? "正在从查询产物生成图表…" : reportChartNote }}</span></div><div class="report-chart-foot"><span>{{ reportChartPayload?.note ?? "图表由本次受控 SQL 查询结果生成" }}</span><button v-if="reportRun" type="button" class="interactive" @click="selectSection('query')">继续分析 <ArrowUpRight :size="12" /></button></div></div></section>
+          <section class="panel followup-panel"><header class="panel-heading"><div><div class="panel-kicker">CONTEXT FOLLOW-UP</div><h2>继续追问这份报告</h2></div><span class="followup-context"><MessageSquareText :size="12" />{{ followupContext }}</span></header><div class="followup-thread"><div v-for="message in followupMessages" :key="message.id" class="followup-item" :class="message.role"><small>{{ message.role === "user" ? "你" : "智析" }}</small><p>{{ message.content_text }}</p></div><div v-if="followupPending" class="followup-item user"><small>你</small><p>{{ pendingFollowupQuestion }}</p></div><div v-if="followupPending" class="followup-item assistant pending"><small>智析</small><p>正在沿用当前会话上下文继续查询真实数据…</p></div><div v-if="followupError" class="followup-item assistant error"><small>智析</small><p>{{ followupError }}</p></div><div v-if="!followupMessages.length && !followupPending && !followupError" class="followup-empty"><span>在上方智能问数中完成一次分析后，就可以在这里基于报告继续追问。</span></div></div><div class="followup-input-row"><textarea ref="followupInput" v-model="followupQuestion" rows="1" placeholder="基于当前报告继续追问，例如：按流量类型拆分呢？" @keydown.enter.exact.prevent="askFollowUp" /><button type="button" class="send-button interactive" :disabled="!followupQuestion.trim() || followupPending || !followupReady" :aria-label="followupPending ? '追问分析中' : '发送追问'" @click="askFollowUp"><span v-if="followupPending" class="spinner" /><Send v-else :size="15" /></button></div><div class="followup-foot"><span>追问会沿用当前会话与数据源</span><span>{{ followupReady ? "Agent 已就绪" : "请先在智能问数中完成一次分析" }}</span></div></section>
           <section class="panel table-panel"><header class="panel-heading"><div><div class="panel-kicker">ANALYSIS HISTORY</div><h2>最近的分析会话</h2></div><button type="button" class="outline-action interactive" @click="sessions.load()"><RefreshCw :size="14" />刷新</button></header><div v-if="reportRows.length" class="data-table"><div class="table-row table-head"><span>报告名称</span><span>数据源</span><span>生成时间</span><span>状态</span><span /></div><button v-for="row in reportRows" :key="row.id" type="button" class="table-row interactive" @click="openReport(row.id)"><span class="report-name"><i><FileText :size="15" /></i><strong>{{ row.title }}</strong></span><span>{{ row.type }}</span><span>{{ row.time }}</span><span class="success-state"><Check :size="13" />可回放</span><ArrowUpRight :size="15" /></button></div><div v-else class="data-empty table-empty"><FileText :size="20" /><strong>暂无真实分析报告</strong><span>在智能问数中发起一次真实分析后，会话与证据链会自动出现在这里。</span><button type="button" class="outline-action interactive" @click="selectSection('query')">去提问</button></div></section>
         </template>
 
