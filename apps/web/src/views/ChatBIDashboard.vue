@@ -152,10 +152,24 @@ function selectSection(section: Section) {
   if (section === "query") {
     void nextTick(() => {
       queryInput.value?.focus({ preventScroll: true });
-      queryDock.value?.scrollIntoView({ behavior: motion, block: "center" });
+      const container = pageScroll.value;
+      const dock = queryDock.value;
+      if (!container || !dock) return;
+      const offset = dock.getBoundingClientRect().top - container.getBoundingClientRect().top;
+      container.scrollTo({
+        top: Math.max(0, container.scrollTop + offset - 16),
+        behavior: motion,
+      });
     });
   } else if (section === "dashboard") {
-    void nextTick(() => pageScroll.value?.scrollTo({ top: 0, behavior: motion }));
+    queryInput.value?.blur();
+    void nextTick(() => {
+      const container = pageScroll.value;
+      if (!container) return;
+      // 立即回顶：同时取消可能仍在运行的平滑滚动，避免滚轮上滑被动画锁住。
+      container.scrollTo({ top: 0, behavior: "auto" });
+      container.scrollTop = 0;
+    });
   }
 }
 function setPointerGlow(event: PointerEvent) {
