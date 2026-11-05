@@ -456,7 +456,7 @@ async function submitQuestion() {
   runInsights.value = null;
   aiConclusion.value = "正在理解业务意图、匹配指标口径并生成查询计划…";
   analysisSource.value = "AI Agent 正在分析真实数据源";
-  selectSection("dashboard");
+  // 提交后保持当前问数位置，不切回驾驶舱顶部。
   try {
     if (!sessions.currentSession || sessions.currentSession.selected_datasource_id !== source.id) {
       await sessions.create("新分析", source.id);
