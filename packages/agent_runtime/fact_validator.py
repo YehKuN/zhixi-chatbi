@@ -56,7 +56,9 @@ def validate_final_answer_facts(
             continue
         checked += 1
         cell, has_unit = line_match
-        if not _scalar_matches(cell, fact.value, fact.unit, has_unit):
+        if not _scalar_matches(
+            cell, fact.value, fact.unit, has_unit, _is_percent_fact(fact)
+        ):
             mismatches.append(fact.fact_key or fact.name)
     if mismatches:
         return FinalAnswerFactValidation(
@@ -183,7 +185,19 @@ def _labelled_line_match(markdown: str, fact: AnalysisClaimValue) -> tuple[str, 
 
 def _cell_matches_fact(cell: str, header: str, fact: AnalysisClaimValue) -> bool:
     has_unit = "%" in cell or "%" in header
-    return _scalar_matches(cell, fact.value, fact.unit, has_unit)
+    return _scalar_matches(cell, fact.value, fact.unit, has_unit, _is_percent_fact(fact))
+
+
+def _is_percent_fact(fact: AnalysisClaimValue) -> bool:
+    text = f"{fact.name} {_fact_field(fact.fact_key)}"
+    return (
+        re.search(
+            r"rate|ratio|pct|percent|share|conversion|率|占比",
+            text,
+            flags=re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def _scalar_matches(
@@ -191,6 +205,7 @@ def _scalar_matches(
     expected: AnalysisScalar,
     unit: str | None,
     has_unit: bool,
+    percent_hint: bool = False,
 ) -> bool:
     if _is_iso_date_value(expected):
         extracted = _extract_iso_date(text)
@@ -200,9 +215,14 @@ def _scalar_matches(
     if actual is not None and expected_decimal is not None:
         if unit == "%" and not has_unit:
             return False
-        if unit is None and has_unit:
+        if unit is None and has_unit and not percent_hint:
             return False
-        return _decimals_match_displayed(expected_decimal, actual)
+        if _decimals_match_displayed(expected_decimal, actual):
+            return True
+        # 查询结果常以 0.1547 的小数形式保存比率，而正文按 15.47% 展示。
+        if (unit == "%" or percent_hint) and abs(expected_decimal) <= 1.5:
+            return _decimals_match_displayed(expected_decimal * 100, actual)
+        return False
     normalized = _normalize(text).strip("`\"'")
     expected_text = _normalize(str(expected)).strip("`\"'")
     return normalized == expected_text

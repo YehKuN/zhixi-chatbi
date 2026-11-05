@@ -127,8 +127,15 @@ const ranking = computed(() => overview.value?.ranking ?? null);
 const alertItems = computed(() => overview.value?.alerts ?? []);
 const alertCount = computed(() => alertItems.value.length);
 const briefingText = computed(() => {
-  if (runs.currentRun?.status === "running") return "正在基于真实数据源执行受控查询，证据链生成中。";
-  if (runs.currentRun?.status === "succeeded") {
+  const run = runs.currentRun;
+  if (run?.status === "running") return "正在基于真实数据源执行受控查询，证据链生成中。";
+  if (run?.status === "succeeded") {
+    if (run.completion_kind === "partial") {
+      return "最近一次分析部分完成，已保留可验证结论与查询产物。";
+    }
+    if (run.completion_kind === "clarification") {
+      return "最近一次分析需要补充范围后才能继续。";
+    }
     return "最近一次真实数据分析已完成，结论、SQL 审计与查询产物可在分析工作台中回放。";
   }
   if (overviewLoading.value) return "正在聚合当前数据源，请稍候…";
@@ -605,6 +612,7 @@ function buildReportChart(table: TableData): ReportChartPayload | null {
           : { type: "value" as const, min: 0, splitNumber: 3, axisLabel: { color: "#6f829d", fontSize: 8 }, splitLine: { lineStyle: { color: "rgba(104,153,199,.1)", type: "dashed" as const } }, axisLine: { show: false } },
       ];
   const seriesNames = series.map((item) => String(item.name));
+  const labelInterval = labels.length > 8 ? Math.ceil(labels.length / 8) - 1 : 0;
   const summary = reportColumnLabel(table.columns[xIndex]) + " · " + seriesNames.join(" × ");
   const note = "来自本次查询结果 · " + table.row_count + " 行 · " +
     table.columns.map(reportColumnLabel).join(" / ");
@@ -635,7 +643,14 @@ function buildReportChart(table: TableData): ReportChartPayload | null {
       data: labels,
       axisLine: { lineStyle: { color: "rgba(120,165,206,.18)" } },
       axisTick: { show: false },
-      axisLabel: { color: "#7486a1", fontSize: 8, margin: 7, rotate: labels.length > 8 ? 24 : 0, interval: 0 },
+      axisLabel: {
+        color: "#7486a1",
+        fontSize: 8,
+        margin: 7,
+        rotate: labels.length > 8 ? 30 : 0,
+        interval: labelInterval,
+        formatter: (value: string) => value.length > 14 ? value.slice(0, 13) + "…" : value,
+      },
     },
     yAxis,
     series,
@@ -703,10 +718,10 @@ function setPrompt(prompt: string) {
   question.value = prompt;
   selectSection("query");
 }
-function applyRunInsights(reply: string) {
+function applyRunInsights(reply: string, partial = false) {
   const summary = reply.replace(/\s+/g, " ").slice(0, 72);
   runInsights.value = [
-    { kind: "positive", label: "分析结论", title: "本次真实数据分析已完成", detail: summary + (reply.length > 72 ? "…" : ""), time: formatTime(new Date()) },
+    { kind: partial ? "warning" : "positive", label: "分析结论", title: partial ? "本次分析部分完成" : "本次真实数据分析已完成", detail: summary + (reply.length > 72 ? "…" : ""), time: formatTime(new Date()) },
     { kind: "neutral", label: "证据链", title: runs.sqlAudits.length + " 条 SQL 审计 · " + runs.artifacts.length + " 个产物", detail: "查询语句、结果产物与结论引用均已登记，可在分析工作台回放。", time: formatTime(new Date()) },
     { kind: "warning", label: "数据范围", title: runs.currentRun?.datasource_id ? "已绑定真实数据源" : "数据源已记录", detail: "结论仅覆盖本次只读查询命中的记录，查询上限内的结果不代表全量数据。", time: formatTime(new Date()) },
   ];
@@ -760,9 +775,10 @@ async function openReport(sessionId: string) {
   await sessions.select(sessionId);
   const reply = [...sessions.messages].reverse().find((item) => item.role === "assistant");
   latestQuestion.value = sessions.currentSession?.title ?? "历史分析会话";
+  const historyRun = sessions.runs.find((run) => run.status === "succeeded");
   if (reply?.content_text) {
     aiConclusion.value = reply.content_text;
-    applyRunInsights(reply.content_text);
+    applyRunInsights(reply.content_text, historyRun?.completion_kind === "partial");
   }
   analysisSource.value = "历史分析会话 · 可回放 SQL 与证据链";
   followupError.value = null;
@@ -827,19 +843,32 @@ watch(() => runs.currentRun?.status, async (status) => {
   const wasFollowup = submittedFrom.value === "followup";
   submittedFrom.value = "dashboard";
   if (status === "succeeded") {
-    analysisSource.value = "受控分析引擎 · 已完成真实查询并登记产物";
+    const completion = runs.currentRun?.completion_kind;
+    if (completion === "partial") {
+      analysisSource.value = "分析部分完成 · 已保留可验证结果";
+    } else if (completion === "clarification") {
+      analysisSource.value = "分析暂停 · 需要补充分析范围";
+    } else {
+      analysisSource.value = "受控分析引擎 · 已完成真实查询并登记产物";
+    }
     const sessionId = sessions.currentSession?.id;
     if (sessionId) {
       await sessions.select(sessionId);
       const reply = [...sessions.messages].reverse().find((item) => item.role === "assistant");
       if (reply?.content_text) {
         aiConclusion.value = reply.content_text;
-        applyRunInsights(reply.content_text);
+        applyRunInsights(reply.content_text, completion === "partial");
       }
     }
     reportChartRunId = null;
     if (activeSection.value === "reports") await loadReportChart();
-    notify("分析完成，结论与证据已更新");
+    if (completion === "partial") {
+      notify("分析部分完成，可验证结论与查询产物已保留", "warning");
+    } else if (completion === "clarification") {
+      notify("分析需要补充范围后才能继续", "warning");
+    } else {
+      notify("分析完成，结论与证据已更新");
+    }
   } else {
     const message = runs.currentRun?.error_message ?? "本次分析未能完整完成，请检查数据源配置或查看运行详情。";
     if (wasFollowup) {

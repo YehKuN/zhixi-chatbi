@@ -6185,6 +6185,11 @@ def _validate_sql_action(
                     "如需补查，请只声明仍未完成的目标。",
                 )
             )
+    assertion_map = {
+        assertion.id: assertion
+        for requirement in requirements
+        for assertion in requirement.assertions
+    }
     evidenced_assertion_ids = _evidenced_assertion_ids(query_attempts)
     attempts_by_assertion: dict[str, int] = {}
     for attempt in query_attempts:
@@ -6199,10 +6204,15 @@ def _validate_sql_action(
                 )
             )
             continue
+        assertion = assertion_map.get(assertion_id)
+        values_complete = assertion is None or _assertion_required_values_covered(
+            assertion, query_attempts
+        )
+        fully_evidenced = assertion_id in evidenced_assertion_ids and values_complete
         if (
             max_query_attempts_per_assertion is not None
             and attempts_by_assertion.get(assertion_id, 0) >= max_query_attempts_per_assertion
-            and assertion_id not in evidenced_assertion_ids
+            and not fully_evidenced
         ):
             findings.append(
                 (
@@ -6210,7 +6220,7 @@ def _validate_sql_action(
                     f"检查项 {assertion_id} 的查询尝试已达到上限，请停止该检查并继续其它目标。",
                 )
             )
-        if assertion_id in evidenced_assertion_ids:
+        if assertion_id in evidenced_assertion_ids and values_complete:
             findings.append(
                 (
                     f"ANALYSIS_ASSERTION_ALREADY_EVIDENCED:{assertion_id}",
@@ -6219,6 +6229,37 @@ def _validate_sql_action(
                 )
             )
     return findings
+
+
+def _assertion_required_values_covered(
+    assertion: AnalysisAssertion,
+    query_attempts: Sequence[AnalysisQueryAttempt],
+) -> bool:
+    """检查项只有在其全部必需取值都已核验后才算完成，缺失时允许补查一次。"""
+
+    values = [
+        value
+        for attempt in query_attempts
+        if attempt.valid
+        for value in attempt.verified_values
+        if value.assertion_id == assertion.id
+    ]
+    for spec in assertion.claim_extractions:
+        if not spec.required:
+            continue
+        if spec.mode == "scalar":
+            fact_key = analysis_fact_key(spec.field, spec.selector)
+            matches = [
+                value
+                for value in values
+                if value.name == spec.name
+                and (value.fact_key or value.name) in {fact_key, spec.name}
+            ]
+            if not matches:
+                return False
+        elif not any(value.name == spec.name for value in values):
+            return False
+    return True
 
 
 def _record_assertion_failures(

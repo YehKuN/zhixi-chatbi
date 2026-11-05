@@ -24,6 +24,7 @@ from agent_runtime.contracts import (
     AnalysisQueryAttempt,
     AnalysisReportedClaim,
     AnalysisRequirement,
+    AnalysisScalarClaimExtraction,
     AnalysisValidationFinding,
     AnalysisVerifiedValue,
     ArtifactRef,
@@ -173,6 +174,67 @@ def test_query_attempt_limit_is_enforced_per_assertion() -> None:
 
     assert any(code == "ANALYSIS_ASSERTION_QUERY_LIMIT_REACHED:R1.A1" for code, _ in findings)
     assert all("R1.A2" not in code for code, _ in findings)
+
+
+def test_evidenced_assertion_can_be_requeried_until_required_values_are_verified() -> None:
+    assertion = AnalysisAssertion(
+        id="R1.A1",
+        requirement_id="R1",
+        description="计算页面价值与购买转化率相关系数",
+        required=True,
+        claim_extractions=[
+            AnalysisScalarClaimExtraction(
+                mode="scalar",
+                name="页面价值与购买转化率相关系数",
+                field="corr",
+                required=True,
+            )
+        ],
+    )
+    requirement = AnalysisRequirement(
+        id="R1",
+        description="检查相关性",
+        acceptance_criteria=["返回可核验结果"],
+        assertions=[assertion],
+        status="queried",
+    )
+    attempt = AnalysisQueryAttempt(
+        id="Q1",
+        requirement_ids=["R1"],
+        assertion_ids=["R1.A1"],
+        assertions=[assertion],
+        status="evidenced",
+        valid=True,
+        verified_values=[],
+    )
+
+    findings = _validate_sql_action(
+        ["R1"],
+        ["R1.A1"],
+        [requirement],
+        [attempt],
+        max_query_attempts_per_assertion=3,
+    )
+
+    assert all(code != "ANALYSIS_ASSERTION_ALREADY_EVIDENCED:R1.A1" for code, _ in findings)
+
+    attempt.verified_values = [
+        AnalysisVerifiedValue(
+            name="页面价值与购买转化率相关系数",
+            value=0.4925692952512057,
+            assertion_id="R1.A1",
+            fact_key="corr",
+        )
+    ]
+    findings = _validate_sql_action(
+        ["R1"],
+        ["R1.A1"],
+        [requirement],
+        [attempt],
+        max_query_attempts_per_assertion=3,
+    )
+
+    assert any(code == "ANALYSIS_ASSERTION_ALREADY_EVIDENCED:R1.A1" for code, _ in findings)
 
 
 def test_messages_for_model_keeps_complete_tool_batches_and_drops_orphans() -> None:

@@ -63,6 +63,48 @@ def test_labeled_ratio_checks_unit_without_guessing_other_numbers() -> None:
     assert result.status == "passed"
 
 
+def test_fractional_ratio_matches_display_percentage() -> None:
+    """查询返回 0.1547 的比率、正文按 15.47% 展示时必须核对通过。"""
+
+    fact = _fact(
+        name="整体购买转化率",
+        value=0.15474452554744525,
+        fact_key="conversion_rate",
+        unit="%",
+    )
+
+    result = validate_final_answer_facts("整体购买转化率为 15.47%\n", [fact])
+
+    assert result.status == "passed"
+    assert result.checked_count == 1
+
+
+def test_fractional_ratio_without_unit_hint_still_matches_percentage() -> None:
+    fact = _fact(
+        name="购买转化率",
+        value=0.03854166666666667,
+        fact_key="conversion_rate",
+        unit=None,
+    )
+
+    result = validate_final_answer_facts("购买转化率：3.85%\n", [fact])
+
+    assert result.status == "passed"
+
+
+def test_fractional_ratio_does_not_match_different_percentage_value() -> None:
+    fact = _fact(
+        name="购买转化率",
+        value=0.15474452554744525,
+        fact_key="conversion_rate",
+        unit="%",
+    )
+
+    result = validate_final_answer_facts("购买转化率为 16.47%\n", [fact])
+
+    assert result.status == "mismatch"
+
+
 def test_unbound_markdown_numbers_remain_unchecked() -> None:
     fact = _fact(name="total", value=42, fact_key="total")
 
