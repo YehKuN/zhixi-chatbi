@@ -1,0 +1,40 @@
+# 主服务与 DataLink 共用的运行时镜像；分析沙箱使用独立镜像 apps/api/sandbox/Dockerfile
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app/apps/api:/app/packages
+
+WORKDIR /app
+
+# curl 供健康检查使用；docker-ce-cli 让 API 通过宿主机 Docker 启动分析沙箱容器。
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y ca-certificates curl gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/debian/gpg \
+        -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+https://mirrors.aliyun.com/docker-ce/linux/debian bookworm stable" \
+        > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y docker-ce-cli \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml uv.lock README.md ./
+COPY apps ./apps
+COPY packages ./packages
+COPY services ./services
+COPY migrations ./migrations
+COPY alembic.ini ./
+COPY tools ./tools
+COPY deploy ./deploy
+
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" . \
+    && chmod +x /app/deploy/api-entrypoint.sh /app/deploy/datalink-entrypoint.sh
+
+EXPOSE 8280 8281
+
+ENTRYPOINT ["/app/deploy/api-entrypoint.sh"]

@@ -25,6 +25,6 @@ storage/
 !data/demo/ecommerce.sqlite
 .grok/
 server-connection.md
-deploy/
+deploy/.env
 .scratch/
 .zcode/

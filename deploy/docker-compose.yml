@@ -1,0 +1,71 @@
+name: zhixi-chatbi
+
+services:
+  datalink:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    image: zhixi-chatbi-runtime:latest
+    entrypoint: ["/app/deploy/datalink-entrypoint.sh"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      CHATBI_STORAGE_ROOT: ${CHATBI_STORAGE_ROOT:-/opt/zhixi/storage}
+      DATALINK_LLM_MODEL: ${DATALINK_LLM_MODEL:-${DEEPSEEK_MODEL:-deepseek-flash}}
+      DATALINK_LLM_BASE_URL: ${DATALINK_LLM_BASE_URL:-${DEEPSEEK_BASE_URL:-https://api.deepseek.com}}
+      DATALINK_LLM_API_KEY: ${DATALINK_LLM_API_KEY:-${DEEPSEEK_API_KEY:-}}
+    volumes:
+      # 容器内外保持同一绝对路径，API 启动的分析沙箱挂载才能在宿主机解析。
+      - ${CHATBI_STORAGE_ROOT:-/opt/zhixi/storage}:${CHATBI_STORAGE_ROOT:-/opt/zhixi/storage}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8281/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    image: zhixi-chatbi-runtime:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      CHATBI_STORAGE_ROOT: ${CHATBI_STORAGE_ROOT:-/opt/zhixi/storage}
+      DATALINK_BASE_URL: http://datalink:8281
+      DATALINK_MCP_URL: http://datalink:8281/mcp
+      DATALINK_CONTROL_URL: http://api:8280
+      SANDBOX_MODE: docker
+      SANDBOX_IMAGE: chatbi-analysis:0.1.0
+    volumes:
+      - ${CHATBI_STORAGE_ROOT:-/opt/zhixi/storage}:${CHATBI_STORAGE_ROOT:-/opt/zhixi/storage}
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      datalink:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8280/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    image: zhixi-chatbi-web:latest
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-18080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
