@@ -183,14 +183,16 @@
 .live-pill i { width: 4px; height: 4px; }
 .menu-button { display: grid; width: 26px; height: 25px; place-items: center; border: 1px solid transparent; border-radius: 6px; background: transparent; color: #7388a2; cursor: pointer; transition: .3s var(--cb-ease); }
 .menu-button:hover { border-color: rgba(100, 168, 208, .2); background: rgba(51, 102, 139, .14); color: #b6e7f9; transform: rotate(10deg); }
-.trend-total { position: absolute; display: flex; align-items: center; gap: 7px; margin-top: 8px; }
+.trend-total { position: static; display: flex; min-height: 18px; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 7px; }
 .trend-panel { position: relative; }
 .trend-total > strong { color: #ebf7ff; font-size: 17px; font-weight: 700; letter-spacing: -.6px; }
 .trend-total > strong small { margin-left: 2px; color: #8fa7c0; font-size: 10px; font-weight: 500; }
 .trend-total > span { display: flex; align-items: center; gap: 1px; border: 1px solid rgba(66, 208, 160, .16); border-radius: 5px; background: rgba(43, 172, 131, .08); padding: 3px 5px; color: #55d9ad; font-family: "DM Mono", monospace; font-size: 8px; }
 .trend-total > span.down { border-color: rgba(255, 119, 146, .22); background: rgba(200, 72, 102, .1); color: #ff9caf; }
 .trend-total > em { color: #70849d; font-size: 8px; font-style: normal; }
-.trend-chart { width: 100%; height: 179px; margin-top: 29px; }
+.trend-legend-inline { display: flex; align-items: center; gap: 9px; margin-left: auto; }
+.trend-legend-inline > span { display: flex; align-items: center; gap: 4px; color: #9aacc2; font-size: 8px; white-space: nowrap; }
+.trend-chart { width: 100%; height: 172px; margin-top: 5px; }
 .chart-foot { display: flex; align-items: center; gap: 13px; border-top: 1px solid rgba(114, 158, 194, .1); padding-top: 8px; color: #6e829c; font-size: 8px; }
 .chart-foot > span:first-child { display: flex; align-items: center; gap: 5px; color: #94a7bd; }
 .chart-foot > span:nth-child(2) { margin-left: auto; }
@@ -198,6 +200,7 @@
 .chart-foot button:hover, .region-foot button:hover { color: #b0edff; }
 .legend-dot { width: 5px; height: 5px; border-radius: 50%; background: #54d3f4; box-shadow: 0 0 6px rgba(84,211,244,.45); }
 .legend-dot.cyan { background: #54d3f4; }
+.legend-dot.violet { background: #a08cff; box-shadow: 0 0 6px rgba(160,140,255,.45); }
 .insight-panel { display: flex; flex-direction: column; overflow: hidden; padding: 14px 15px 10px; }
 .insight-panel > .panel-heading { flex: none; }
 .insight-scroll { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; scrollbar-color: rgba(91, 173, 219, .38) transparent; scrollbar-width: thin; }
