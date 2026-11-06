@@ -27,7 +27,9 @@ class ConnectionService:
         self.secrets = SecretRepository(repository.db)
         self.cipher = cipher
 
-    async def create(self, payload: DataSourceConnectionCreate) -> DataSourceModel:
+    async def create(
+        self, payload: DataSourceConnectionCreate, *, enterprise_id: str | None = None
+    ) -> DataSourceModel:
         secret = await self.secrets.create(
             self.cipher.encrypt(payload.credentials.password.get_secret_value())
         )
@@ -39,6 +41,7 @@ class ConnectionService:
             config=config,
             credential_ref=secret.id,
             fingerprint=_fingerprint(config),
+            enterprise_id=enterprise_id,
         )
 
     async def update(

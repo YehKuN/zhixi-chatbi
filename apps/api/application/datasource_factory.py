@@ -26,6 +26,7 @@ def build_datasource_service(
     datalink_client: DataLinkManagementPort | None = None,
     run_lifecycle: RunLifecycleCoordinator | None = None,
     cipher: SecretCipher | None = None,
+    enterprise_id: str | None = None,
 ) -> DataSourceService:
     """创建唯一的数据源服务组合，供 HTTP 和固定分析 Run 共同使用。"""
 
@@ -51,4 +52,5 @@ def build_datasource_service(
         max_upload_mb=settings.max_upload_mb,
         run_lifecycle=run_lifecycle,
         cipher=cipher or SecretCipher(settings.secret_master_key),
+        enterprise_id=enterprise_id,
     )

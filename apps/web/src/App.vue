@@ -27,13 +27,16 @@ const profileDetail = computed(() =>
 );
 
 onMounted(async () => {
-  const hadToken = auth.isAuthenticated;
-  await auth.refresh();
-  if (hadToken && !auth.isAuthenticated) {
-    await router.replace({
-      path: "/login",
-      query: { redirect: router.currentRoute.value.fullPath },
-    });
+  const onAdminConsole = router.currentRoute.value.path.startsWith("/admin");
+  if (!onAdminConsole) {
+    const hadToken = auth.isAuthenticated;
+    await auth.refresh();
+    if (hadToken && !auth.isAuthenticated) {
+      await router.replace({
+        path: "/login",
+        query: { redirect: router.currentRoute.value.fullPath },
+      });
+    }
   }
   try {
     health.value = await getHealth();

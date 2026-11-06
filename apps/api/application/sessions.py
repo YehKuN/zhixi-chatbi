@@ -68,27 +68,30 @@ class SessionService:
         artifact_store: ArtifactStore,
         session_workspace: SessionWorkspaceManager | None = None,
         run_lifecycle: RunLifecycleCoordinator | None = None,
+        enterprise_id: str | None = None,
     ) -> None:
         self.repository = repository
         self.datasource = datasource
         self.artifact_store = artifact_store
         self.session_workspace = session_workspace
         self.run_lifecycle = run_lifecycle
+        self.enterprise_id = enterprise_id
 
     async def create(self, payload: SessionCreate) -> SessionRead:
         """创建会话；若指定数据源，必须已经完整准备好供 Run 使用。"""
 
         await self._validate_datasource_binding(payload.selected_datasource_id)
-        model = await self.repository.create(payload)
+        model = await self.repository.create(payload, enterprise_id=self.enterprise_id)
         return to_session_read(model)
 
     async def list(self, page: Page, *, q: str | None = None) -> PageResult[SessionRead]:
-        """分页返回会话摘要，排序与持久层保持一致。"""
+        """分页返回当前企业的会话摘要，排序与持久层保持一致。"""
 
         items, total = await self.repository.list(
             offset=page.offset,
             limit=page.page_size,
             q=_normalized_q(q),
+            enterprise_id=self.enterprise_id,
         )
         return PageResult(
             items=[to_session_read(item) for item in items],
@@ -179,7 +182,9 @@ class SessionService:
         """查找会话 ORM 模型，统一处理不存在的情况。"""
 
         model = await self.repository.get(session_id)
-        if model is None:
+        if model is None or (
+            self.enterprise_id is not None and model.enterprise_id != self.enterprise_id
+        ):
             raise AppError(
                 ErrorCode.SESSION_NOT_FOUND,
                 "Session does not exist",
@@ -194,7 +199,9 @@ class SessionService:
         if datasource_id is None:
             return
         datasource = await self.datasource.get(datasource_id)
-        if datasource is None:
+        if datasource is None or (
+            self.enterprise_id is not None and datasource.enterprise_id != self.enterprise_id
+        ):
             raise AppError(
                 ErrorCode.DATASOURCE_NOT_FOUND,
                 "数据源不存在",

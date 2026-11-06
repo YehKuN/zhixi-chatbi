@@ -65,21 +65,32 @@ class SessionRepository:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    async def create(self, payload: SessionCreate) -> SessionModel:
+    async def create(
+        self, payload: SessionCreate, *, enterprise_id: str | None = None
+    ) -> SessionModel:
         model = SessionModel(
             id=make_id("session"),
             title=payload.title,
             selected_datasource_id=payload.selected_datasource_id,
+            enterprise_id=enterprise_id,
         )
         self.db.add(model)
         await self.db.flush()
         return model
 
     async def list(
-        self, *, offset: int, limit: int, q: str | None = None
+        self,
+        *,
+        offset: int,
+        limit: int,
+        q: str | None = None,
+        enterprise_id: str | None = None,
     ) -> tuple[list[SessionModel], int]:
         count_stmt = select(func.count()).select_from(SessionModel)
         stmt = select(SessionModel)
+        if enterprise_id is not None:
+            count_stmt = count_stmt.where(SessionModel.enterprise_id == enterprise_id)
+            stmt = stmt.where(SessionModel.enterprise_id == enterprise_id)
         if q:
             match = _like_contains(SessionModel.title, q)
             count_stmt = count_stmt.where(match)
@@ -143,12 +154,14 @@ class DataSourceRepository:
         content_hash: str,
         mask_fields: list[str] | None = None,
         mask_fields_confirmed: bool = False,
+        enterprise_id: str | None = None,
     ) -> DataSourceModel:
         model = DataSourceModel(
             id=datasource_id,
             name=name,
             description=description,
             type=datasource_type.value,
+            enterprise_id=enterprise_id,
             source_ref=source_ref,
             file_size=file_size,
             content_hash=content_hash,
@@ -198,11 +211,17 @@ class DataSourceRepository:
         await self.db.flush()
         return model
 
-    async def list(self, *, offset: int, limit: int) -> tuple[list[DataSourceModel], int]:
-        total = await self.db.scalar(select(func.count()).select_from(DataSourceModel))
+    async def list(
+        self, *, offset: int, limit: int, enterprise_id: str | None = None
+    ) -> tuple[list[DataSourceModel], int]:
+        total_stmt = select(func.count()).select_from(DataSourceModel)
+        stmt = select(DataSourceModel)
+        if enterprise_id is not None:
+            total_stmt = total_stmt.where(DataSourceModel.enterprise_id == enterprise_id)
+            stmt = stmt.where(DataSourceModel.enterprise_id == enterprise_id)
+        total = await self.db.scalar(total_stmt)
         result = await self.db.scalars(
-            select(DataSourceModel)
-            .order_by(DataSourceModel.updated_at.desc(), DataSourceModel.id.desc())
+            stmt.order_by(DataSourceModel.updated_at.desc(), DataSourceModel.id.desc())
             .offset(offset)
             .limit(limit)
         )
@@ -811,13 +830,20 @@ class ModelProfileRepository:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    async def create(self, payload: ModelProfileCreate, secret_ref: str) -> ModelProfileModel:
+    async def create(
+        self,
+        payload: ModelProfileCreate,
+        secret_ref: str,
+        *,
+        enterprise_id: str | None = None,
+    ) -> ModelProfileModel:
         model = ModelProfileModel(
             id=make_id("profile"),
             name=payload.name,
             provider=payload.provider,
             model_name=payload.model_name,
             base_url=str(payload.base_url),
+            enterprise_id=enterprise_id,
             temperature=payload.temperature,
             run_timeout_seconds=payload.run_timeout_seconds,
             context_window_tokens=payload.context_window_tokens,
@@ -830,11 +856,17 @@ class ModelProfileRepository:
         await self.db.flush()
         return model
 
-    async def list(self, *, offset: int, limit: int) -> tuple[list[ModelProfileModel], int]:
-        total = await self.db.scalar(select(func.count()).select_from(ModelProfileModel))
+    async def list(
+        self, *, offset: int, limit: int, enterprise_id: str | None = None
+    ) -> tuple[list[ModelProfileModel], int]:
+        count_stmt = select(func.count()).select_from(ModelProfileModel)
+        stmt = select(ModelProfileModel)
+        if enterprise_id is not None:
+            count_stmt = count_stmt.where(ModelProfileModel.enterprise_id == enterprise_id)
+            stmt = stmt.where(ModelProfileModel.enterprise_id == enterprise_id)
+        total = await self.db.scalar(count_stmt)
         result = await self.db.scalars(
-            select(ModelProfileModel)
-            .order_by(ModelProfileModel.updated_at.desc(), ModelProfileModel.id.desc())
+            stmt.order_by(ModelProfileModel.updated_at.desc(), ModelProfileModel.id.desc())
             .offset(offset)
             .limit(limit)
         )
@@ -843,12 +875,13 @@ class ModelProfileRepository:
     async def get(self, profile_id: str) -> ModelProfileModel | None:
         return await self.db.get(ModelProfileModel, profile_id)
 
-    async def get_active(self) -> ModelProfileModel | None:
-        """读取本地单人 Demo 唯一激活模型，数据库部分唯一索引保证至多一条。"""
+    async def get_active(self, enterprise_id: str | None = None) -> ModelProfileModel | None:
+        """读取当前唯一激活模型，数据库部分唯一索引按企业保证至多一条。"""
 
-        result = await self.db.scalars(
-            select(ModelProfileModel).where(ModelProfileModel.is_active.is_(True))
-        )
+        statement = select(ModelProfileModel).where(ModelProfileModel.is_active.is_(True))
+        if enterprise_id is not None:
+            statement = statement.where(ModelProfileModel.enterprise_id == enterprise_id)
+        result = await self.db.scalars(statement)
         return result.one_or_none()
 
     async def update(
@@ -901,10 +934,15 @@ class ModelProfileRepository:
         await self.db.flush()
         return model
 
-    async def activate(self, model: ModelProfileModel) -> ModelProfileModel:
-        """激活前清空其它 Profile，保证本地单用户场景只有一个主模型。"""
+    async def activate(
+        self, model: ModelProfileModel, *, enterprise_id: str | None = None
+    ) -> ModelProfileModel:
+        """激活前清空同一企业内的其它 Profile，保留企业各自的主模型。"""
 
-        await self.db.execute(update(ModelProfileModel).values(is_active=False))
+        statement = update(ModelProfileModel).values(is_active=False)
+        if enterprise_id is not None:
+            statement = statement.where(ModelProfileModel.enterprise_id == enterprise_id)
+        await self.db.execute(statement)
         model.is_active = True
         await self.db.flush()
         return model

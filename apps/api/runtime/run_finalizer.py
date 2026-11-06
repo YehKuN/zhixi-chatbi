@@ -143,6 +143,12 @@ class RunFinalizer:
                 run.error_message = None
                 run.finished_at = datetime.now(UTC)
                 run.answer_data_freshness = _answer_data_freshness(outcome)
+                usage = outcome.usage_summary
+                if usage is not None and usage.model_calls > 0:
+                    run.usage_input_tokens = usage.input_tokens
+                    run.usage_output_tokens = usage.output_tokens
+                    run.usage_total_tokens = usage.total_tokens
+                    run.usage_model_calls = usage.model_calls
                 memory = ConversationMemoryService(db)
                 if completion_kind == "clarification" and outcome.clarification is not None:
                     updated = await memory.set_pending(

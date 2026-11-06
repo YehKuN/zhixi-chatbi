@@ -8,6 +8,7 @@ export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: "/login", component: () => import("@/views/AuthView.vue"), meta: { public: true } },
+    { path: "/admin", component: () => import("@/views/AdminConsole.vue"), meta: { public: true } },
     {
       path: "/",
       redirect: () => (readAuthToken() ? "/workspace" : "/login"),

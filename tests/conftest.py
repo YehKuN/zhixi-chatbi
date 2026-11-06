@@ -102,6 +102,9 @@ class FakeDataLinkClient:
 def settings(tmp_path: Path) -> Settings:
     return Settings(
         app_env="test",
+        auth_required=False,
+        admin_username="admin",
+        admin_password="AdminConsolePass123",
         api_host="127.0.0.1",
         api_port=8280,
         api_workers=1,

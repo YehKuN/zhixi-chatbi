@@ -55,6 +55,9 @@ class DataSourceModel(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     type: Mapped[str] = mapped_column(String(20), nullable=False)
+    enterprise_id: Mapped[str | None] = mapped_column(
+        ForeignKey("enterprises.id", ondelete="RESTRICT"), index=True
+    )
     source_ref: Mapped[str | None] = mapped_column(String(500), unique=True)
     source_kind: Mapped[str] = mapped_column(
         String(20), default="file", server_default="file", nullable=False
@@ -112,7 +115,8 @@ class ModelProfileModel(TimestampMixin, Base):
     __tablename__ = "model_profiles"
     __table_args__ = (
         Index(
-            "uq_model_profiles_single_active",
+            "uq_model_profiles_enterprise_active",
+            "enterprise_id",
             "is_active",
             unique=True,
             sqlite_where=text("is_active = 1"),
@@ -133,6 +137,9 @@ class ModelProfileModel(TimestampMixin, Base):
     provider: Mapped[str] = mapped_column(String(80), nullable=False)
     model_name: Mapped[str] = mapped_column(String(120), nullable=False)
     base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    enterprise_id: Mapped[str | None] = mapped_column(
+        ForeignKey("enterprises.id", ondelete="RESTRICT"), index=True
+    )
     temperature: Mapped[float] = mapped_column(Float, default=0, nullable=False)
     run_timeout_seconds: Mapped[int] = mapped_column(Integer, default=600, nullable=False)
     secret_ref: Mapped[str | None] = mapped_column(ForeignKey("secrets.id", ondelete="SET NULL"))
@@ -152,6 +159,9 @@ class SessionModel(TimestampMixin, Base):
 
     id: Mapped[str] = mapped_column(String(120), primary_key=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
+    enterprise_id: Mapped[str | None] = mapped_column(
+        ForeignKey("enterprises.id", ondelete="RESTRICT"), index=True
+    )
     selected_datasource_id: Mapped[str | None] = mapped_column(
         ForeignKey("data_sources.id", ondelete="SET NULL")
     )
@@ -344,6 +354,10 @@ class RunModel(TimestampMixin, Base):
     tool_schema_cost: Mapped[int | None] = mapped_column(Integer)
     safety_margin_tokens: Mapped[int | None] = mapped_column(Integer)
     completion_kind: Mapped[str | None] = mapped_column(String(20))
+    usage_input_tokens: Mapped[int | None] = mapped_column(Integer)
+    usage_output_tokens: Mapped[int | None] = mapped_column(Integer)
+    usage_total_tokens: Mapped[int | None] = mapped_column(Integer)
+    usage_model_calls: Mapped[int | None] = mapped_column(Integer)
     incomplete_reason: Mapped[str | None] = mapped_column(String(120))
     error_code: Mapped[str | None] = mapped_column(String(80))
     error_message: Mapped[str | None] = mapped_column(Text)

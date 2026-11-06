@@ -81,7 +81,7 @@ class RunContextResolver:
         """读取当前可用对象并冻结其身份；失败时不创建任何 Run 或用户消息。"""
 
         datasource = await self._resolve_datasource(session)
-        profile = await self._resolve_profile()
+        profile = await self._resolve_profile(session.enterprise_id)
         api_key = await self._resolve_api_key(profile)
         access = await resolve_source_access(
             self._db, self._cipher, datasource, self._settings.datasource_root
@@ -225,7 +225,10 @@ class RunContextResolver:
                 status_code=409,
             )
         datasource = await DataSourceRepository(self._db).get(datasource_id)
-        if datasource is None:
+        if datasource is None or (
+            session.enterprise_id is not None
+            and datasource.enterprise_id != session.enterprise_id
+        ):
             raise AppError(
                 ErrorCode.DATASOURCE_NOT_FOUND,
                 "会话选择的数据源不存在",
@@ -307,8 +310,8 @@ class RunContextResolver:
                 historical_summary_ids=[],
             )
 
-    async def _resolve_profile(self) -> ModelProfileModel:
-        profile = await ModelProfileRepository(self._db).get_active()
+    async def _resolve_profile(self, enterprise_id: str | None) -> ModelProfileModel:
+        profile = await ModelProfileRepository(self._db).get_active(enterprise_id)
         if profile is None:
             raise AppError(
                 ErrorCode.MODEL_PROFILE_NOT_READY,

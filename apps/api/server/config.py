@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     app_env: str = Field(default="development", alias="APP_ENV")
+    auth_required: bool = Field(default=True, alias="AUTH_REQUIRED")
+    admin_username: str = Field(default="admin", alias="ADMIN_USERNAME")
+    admin_password: SecretStr | None = Field(default=None, alias="ADMIN_PASSWORD")
+    admin_token_ttl_hours: int = Field(default=12, ge=1, le=168, alias="ADMIN_TOKEN_TTL_HOURS")
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8280, alias="API_PORT")
     api_workers: int = Field(default=1, alias="API_WORKERS")

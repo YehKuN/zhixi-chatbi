@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import {
   AlertCircle,
   ArrowRight,
@@ -16,6 +16,7 @@ import {
   LockKeyhole,
   Mail,
   Phone,
+  Settings2,
   ShieldCheck,
   Sparkles,
   TrendingUp,
@@ -656,6 +657,11 @@ async function copyCode(): Promise<void> {
           <span><ShieldCheck :size="13" />数据仅用于企业内部分析</span>
           <span class="foot-dot">·</span>
           <span>智析 ChatBI 2026</span>
+          <RouterLink class="auth-admin-link" to="/admin">
+            <Settings2 :size="12" />
+            平台管理台
+            <ChevronRight :size="11" />
+          </RouterLink>
         </footer>
       </div>
     </div>

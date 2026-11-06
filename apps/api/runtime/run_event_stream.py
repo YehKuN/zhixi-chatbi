@@ -9,7 +9,7 @@ from typing import Final
 from contracts.errors import AppError, ErrorCode
 from contracts.run_events import RunEventRead, RunEventType
 from contracts.status import RunStatus
-from metadata.repositories import RunRepository
+from metadata.repositories import RunRepository, SessionRepository
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from runtime.run_event_pipeline import RunEventNotifier, RunEventPipeline
@@ -40,16 +40,23 @@ class RunEventStream:
         *,
         session_factory: async_sessionmaker[AsyncSession],
         notifier: RunEventNotifier,
+        enterprise_id: str | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._notifier = notifier
+        self._enterprise_id = enterprise_id
 
     async def ensure_run_exists(self, run_id: str) -> None:
         """在建立长连接前给出稳定的 404，而不是挂起不存在的 Run。"""
 
         async with self._session_factory() as db:
-            if await RunRepository(db).get(run_id) is None:
+            run = await RunRepository(db).get(run_id)
+            if run is None:
                 raise AppError(ErrorCode.RUN_NOT_FOUND, "Run 不存在", status_code=404)
+            if self._enterprise_id is not None:
+                session = await SessionRepository(db).get(run.session_id)
+                if session is None or session.enterprise_id != self._enterprise_id:
+                    raise AppError(ErrorCode.RUN_NOT_FOUND, "Run 不存在", status_code=404)
 
     async def list_after(self, run_id: str, *, after_seq: int) -> list[RunEventRead]:
         """读取同一账本的有限窗口，供非 SSE 客户端按序补发。"""

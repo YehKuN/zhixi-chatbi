@@ -1,3 +1,4 @@
+import { readAuthToken } from "@/lib/authStorage";
 import { buildApiUrl, requestJson, throwApiError } from "./client";
 import type { RunEvent, RunEventPayload, RunEventType } from "./types";
 import { RUN_EVENT_TYPES } from "./types";
@@ -463,10 +464,15 @@ export async function* streamRunEvents(
 ): AsyncGenerator<RunEvent, void, unknown> {
   const query = new URLSearchParams();
   query.set("after_seq", String(options.afterSeq ?? 0));
+  const token = readAuthToken();
+  const headers: Record<string, string> = { Accept: "text/event-stream" };
+  if (token !== null) {
+    headers.Authorization = `Bearer ${token}`;
+  }
   const response = await fetch(
     `${buildApiUrl(`/runs/${encodeURIComponent(runId)}/events`)}?${query.toString()}`,
     {
-      headers: { Accept: "text/event-stream" },
+      headers,
       signal: options.signal,
     },
   );

@@ -41,12 +41,14 @@ class RunService:
         events: RunEventPipeline,
         schedule: RunScheduler,
         request_cancel: RunCanceler | None = None,
+        enterprise_id: str | None = None,
     ) -> None:
         self._db = db
         self._resolver = resolver
         self._events = events
         self._schedule = schedule
         self._request_cancel = request_cancel or (lambda _run_id: False)
+        self._enterprise_id = enterprise_id
 
     async def create(self, session_id: str, payload: RunCreate) -> RunCreateAccepted:
         """原子创建消息、Run 与 queued 事件，成功提交后才通知并排入后台。"""
@@ -57,7 +59,10 @@ class RunService:
         try:
             async with self._events.transaction(run_id):
                 session = await SessionRepository(self._db).get_for_update(session_id)
-                if session is None:
+                if session is None or (
+                    self._enterprise_id is not None
+                    and session.enterprise_id != self._enterprise_id
+                ):
                     raise AppError(
                         ErrorCode.SESSION_NOT_FOUND,
                         "会话不存在",
@@ -175,9 +180,7 @@ class RunService:
     async def get(self, run_id: str) -> RunRead:
         """读取已持久化 Run，不触发任何运行依赖。"""
 
-        model = await RunRepository(self._db).get(run_id)
-        if model is None:
-            raise AppError(ErrorCode.RUN_NOT_FOUND, "Run 不存在", status_code=404)
+        model = await self._get_owned_run(run_id)
         return to_run_read(
             model, datasource_deleted=await self._datasource_deleted(model.datasource_id)
         )
@@ -186,9 +189,7 @@ class RunService:
         """先保存取消命令和事件，再向当前进程任务发协作取消信号。"""
 
         async with self._events.transaction(run_id):
-            run = await RunRepository(self._db).get(run_id)
-            if run is None:
-                raise AppError(ErrorCode.RUN_NOT_FOUND, "Run 不存在", status_code=404)
+            run = await self._get_owned_run(run_id)
             if run.status in {
                 RunStatus.SUCCEEDED.value,
                 RunStatus.FAILED.value,
@@ -241,9 +242,23 @@ class RunService:
             page_size=page.page_size,
         )
 
+    async def _get_owned_run(self, run_id: str) -> RunModel:
+        """Run 必须属于当前企业；跨企业访问统一表现为不存在。"""
+
+        run = await RunRepository(self._db).get(run_id)
+        if run is None:
+            raise AppError(ErrorCode.RUN_NOT_FOUND, "Run 不存在", status_code=404)
+        if self._enterprise_id is not None:
+            session = await SessionRepository(self._db).get(run.session_id)
+            if session is None or session.enterprise_id != self._enterprise_id:
+                raise AppError(ErrorCode.RUN_NOT_FOUND, "Run 不存在", status_code=404)
+        return run
+
     async def _get_session(self, session_id: str) -> SessionModel:
         session = await SessionRepository(self._db).get(session_id)
-        if session is None:
+        if session is None or (
+            self._enterprise_id is not None and session.enterprise_id != self._enterprise_id
+        ):
             raise AppError(
                 ErrorCode.SESSION_NOT_FOUND,
                 "会话不存在",

@@ -6,6 +6,7 @@ from contextlib import suppress
 from typing import Annotated
 
 from application.agent_ports import DataLinkMcpPort
+from application.admin_service import AdminService
 from application.artifacts import ArtifactStore
 from application.auth_service import AuthContext, AuthService
 from application.datalink_client import DataLinkManagementPort
@@ -69,6 +70,23 @@ def get_auth_service(
     return AuthService(AuthRepository(db))
 
 
+def get_admin_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AdminService:
+    return AdminService(db, settings)
+
+
+def get_admin_token(request: Request) -> str:
+    """管理员令牌与入驻企业令牌使用同一 Authorization 头，但作用域不同。"""
+
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise AppError(ErrorCode.AUTH_REQUIRED, "请先以平台管理员身份登录", status_code=401)
+    return token.strip()
+
+
 def get_bearer_token(request: Request) -> str:
     """解析 Authorization: Bearer；缺失或格式错误统一视为未登录。"""
 
@@ -86,9 +104,28 @@ async def get_auth_context(
     return await service.authenticate(token)
 
 
+async def get_auth_scope(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AuthContext | None:
+    """业务接口的企业作用域；未登录时按配置拒绝或在测试环境降级为无作用域。"""
+
+    header = request.headers.get("authorization", "")
+    if header:
+        scheme, _, token = header.partition(" ")
+        if scheme.lower() != "bearer" or not token.strip():
+            raise AppError(ErrorCode.AUTH_REQUIRED, "请先登录后再访问", status_code=401)
+        return await AuthService(AuthRepository(db)).authenticate(token.strip())
+    if settings.auth_required:
+        raise AppError(ErrorCode.AUTH_REQUIRED, "请先登录后再访问", status_code=401)
+    return None
+
+
 def get_session_service(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
+    auth: Annotated[AuthContext | None, Depends(get_auth_scope)],
 ) -> SessionService:
     return SessionService(
         SessionRepository(db),
@@ -100,6 +137,7 @@ def get_session_service(
             request.app.state.settings.session_workspace_root
         ),
         run_lifecycle=request.app.state.run_lifecycle,
+        enterprise_id=auth.enterprise.id if auth is not None else None,
     )
 
 
@@ -108,6 +146,7 @@ def get_run_service(
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
     cipher: Annotated[SecretCipher, Depends(get_cipher)],
+    auth: Annotated[AuthContext | None, Depends(get_auth_scope)],
 ) -> RunService:
     """装配请求阶段的 Run 创建链，后台执行器只接收已提交后的内存上下文。"""
 
@@ -117,21 +156,27 @@ def get_run_service(
         events=RunEventPipeline(db, notify=request.app.state.run_event_notifier.notify),
         schedule=request.app.state.run_executor.schedule,
         request_cancel=request.app.state.run_executor.cancel,
+        enterprise_id=auth.enterprise.id if auth is not None else None,
     )
 
 
-def get_run_event_stream(request: Request) -> RunEventStream:
+def get_run_event_stream(
+    request: Request,
+    auth: Annotated[AuthContext | None, Depends(get_auth_scope)],
+) -> RunEventStream:
     """SSE 使用短生命周期数据库会话，不能借用 HTTP 请求事务。"""
 
     return RunEventStream(
         session_factory=request.app.state.session_factory,
         notifier=request.app.state.run_event_notifier,
+        enterprise_id=auth.enterprise.id if auth is not None else None,
     )
 
 
 def get_run_history_service(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
+    auth: Annotated[AuthContext | None, Depends(get_auth_scope)],
 ) -> RunHistoryService:
     """装配仅使用当前请求 Metadata 会话的历史读取服务。"""
 
@@ -140,18 +185,21 @@ def get_run_history_service(
         artifact_store=ArtifactStore(
             ArtifactRepository(db), request.app.state.settings.artifact_root
         ),
+        enterprise_id=auth.enterprise.id if auth is not None else None,
     )
 
 
 def get_model_profile_service(
     db: Annotated[AsyncSession, Depends(get_db)],
     cipher: Annotated[SecretCipher, Depends(get_cipher)],
+    auth: Annotated[AuthContext | None, Depends(get_auth_scope)],
 ) -> ModelProfileService:
     return ModelProfileService(
         ModelProfileRepository(db),
         SecretRepository(db),
         cipher,
         LangChainModelCapabilityProbe(),
+        enterprise_id=auth.enterprise.id if auth is not None else None,
     )
 
 
@@ -159,8 +207,25 @@ def get_datasource_service(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
+    auth: Annotated[AuthContext | None, Depends(get_auth_scope)],
 ) -> DataSourceService:
     """通过 FastAPI 依赖注入，为路由提供完整的数据源服务链。"""
+
+    return build_datasource_service(
+        db,
+        settings,
+        datalink_client=request.app.state.datalink_client,
+        run_lifecycle=request.app.state.run_lifecycle,
+        enterprise_id=auth.enterprise.id if auth is not None else None,
+    )
+
+
+def get_internal_datasource_service(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> DataSourceService:
+    """内部 DataLink 授权消费使用服务令牌，不经过企业用户会话。"""
 
     return build_datasource_service(
         db,

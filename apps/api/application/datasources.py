@@ -111,6 +111,7 @@ class DataSourceService:
         max_upload_mb: int,
         run_lifecycle: RunLifecycleCoordinator | None = None,
         cipher: SecretCipher | None = None,
+        enterprise_id: str | None = None,
     ) -> None:
         self.repository = repository
         self.gateway = gateway
@@ -119,6 +120,7 @@ class DataSourceService:
         self.max_upload_bytes = max_upload_mb * 1024 * 1024
         self.run_lifecycle = run_lifecycle
         self.cipher = cipher
+        self.enterprise_id = enterprise_id
 
     def connection_service(self) -> ConnectionService:
         if self.cipher is None:
@@ -131,7 +133,9 @@ class DataSourceService:
         )
 
     async def create_connection(self, payload: DataSourceConnectionCreate) -> DataSourceRead:
-        return to_data_source_read(await self.connection_service().create(payload))
+        return to_data_source_read(
+            await self.connection_service().create(payload, enterprise_id=self.enterprise_id)
+        )
 
     async def update_connection(
         self, datasource_id: str, payload: DataSourceConnectionUpdate
@@ -178,6 +182,7 @@ class DataSourceService:
                 source_ref=source_ref,
                 file_size=file_size,
                 content_hash=content_hash,
+                enterprise_id=self.enterprise_id,
             )
         except Exception:
             self._remove_new_upload(source_path)
@@ -192,7 +197,9 @@ class DataSourceService:
     async def list(self, page: Page) -> PageResult[DataSourceRead]:
         """按更新时间倒序返回数据源列表，不暴露受控文件的实际路径。"""
 
-        items, total = await self.repository.list(offset=page.offset, limit=page.page_size)
+        items, total = await self.repository.list(
+            offset=page.offset, limit=page.page_size, enterprise_id=self.enterprise_id
+        )
         return PageResult(
             items=[to_data_source_read(item) for item in items],
             total=total,
@@ -677,7 +684,9 @@ class DataSourceService:
         """获取 Metadata 模型；不存在时转成对外稳定的 404 错误。"""
 
         model = await self.repository.get(datasource_id)
-        if model is None:
+        if model is None or (
+            self.enterprise_id is not None and model.enterprise_id != self.enterprise_id
+        ):
             raise AppError(
                 ErrorCode.DATASOURCE_NOT_FOUND,
                 "数据源不存在",

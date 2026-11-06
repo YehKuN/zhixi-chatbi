@@ -7,6 +7,7 @@ import { router } from "./router";
 import "./styles.css";
 import "./styles/chatbi.css";
 import "./styles/auth.css";
+import "./styles/admin.css";
 import "markstream-vue/index.css";
 
 applyTheme(readStoredTheme());

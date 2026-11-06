@@ -27,6 +27,7 @@ from metadata.repositories import (
     RunDatalinkConsumptionRepository,
     RunHistoryRepository,
     RunRepository,
+    SessionRepository,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,13 +53,20 @@ _INLINE_MIME_TYPES_BY_ARTIFACT = {
 class RunHistoryService:
     """将 Metadata 投影为安全 DTO；不依赖模型、Data Gateway、DataLink 或 Docker。"""
 
-    def __init__(self, db: AsyncSession, *, artifact_store: ArtifactStore | None = None) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        artifact_store: ArtifactStore | None = None,
+        enterprise_id: str | None = None,
+    ) -> None:
         self._db = db
         self._runs = RunRepository(db)
         self._history = RunHistoryRepository(db)
         self._datasources = DataSourceRepository(db)
         self._consumptions = RunDatalinkConsumptionRepository(db)
         self._artifact_store = artifact_store
+        self._enterprise_id = enterprise_id
 
     async def list_tool_calls(self, run_id: str) -> list[ToolCallRead]:
         await self._ensure_run(run_id)
@@ -190,6 +198,10 @@ class RunHistoryService:
         run = await self._runs.get(run_id)
         if run is None:
             raise AppError(ErrorCode.RUN_NOT_FOUND, "Run 不存在", status_code=404)
+        if self._enterprise_id is not None:
+            session = await SessionRepository(self._db).get(run.session_id)
+            if session is None or session.enterprise_id != self._enterprise_id:
+                raise AppError(ErrorCode.RUN_NOT_FOUND, "Run 不存在", status_code=404)
         return run
 
     async def _datasource_deleted(self, datasource_id: str | None) -> bool:

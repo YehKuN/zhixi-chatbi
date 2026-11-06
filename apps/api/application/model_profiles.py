@@ -56,23 +56,29 @@ class ModelProfileService:
         secrets: SecretRepository,
         cipher: SecretCipher,
         capability_probe: ModelCapabilityProbe,
+        enterprise_id: str | None = None,
     ) -> None:
         self.profiles = profiles
         self.secrets = secrets
         self.cipher = cipher
         self.capability_probe = capability_probe
+        self.enterprise_id = enterprise_id
 
     async def create(self, payload: ModelProfileCreate) -> ModelProfileRead:
         """创建模型配置，并把 API Key 加密后单独保存到 Secret 表。"""
 
         secret = await self.secrets.create(self.cipher.encrypt(payload.api_key))
-        model = await self.profiles.create(payload, secret.id)
+        model = await self.profiles.create(
+            payload, secret.id, enterprise_id=self.enterprise_id
+        )
         return to_model_profile_read(model)
 
     async def list(self, page: Page) -> PageResult[ModelProfileRead]:
-        """分页列出模型配置，仅返回是否配置了密钥这一状态。"""
+        """分页列出当前企业的模型配置，仅返回是否配置了密钥这一状态。"""
 
-        items, total = await self.profiles.list(offset=page.offset, limit=page.page_size)
+        items, total = await self.profiles.list(
+            offset=page.offset, limit=page.page_size, enterprise_id=self.enterprise_id
+        )
         return PageResult(
             items=[to_model_profile_read(item) for item in items],
             total=total,
@@ -184,7 +190,7 @@ class ModelProfileService:
         """将指定配置设为当前唯一激活的模型。"""
 
         model = await self._get_model(profile_id)
-        model = await self.profiles.activate(model)
+        model = await self.profiles.activate(model, enterprise_id=self.enterprise_id)
         return to_model_profile_read(model)
 
     async def delete(self, profile_id: str) -> None:
@@ -199,7 +205,9 @@ class ModelProfileService:
         """查找模型配置 ORM 模型，统一生成未找到错误。"""
 
         model = await self.profiles.get(profile_id)
-        if model is None:
+        if model is None or (
+            self.enterprise_id is not None and model.enterprise_id != self.enterprise_id
+        ):
             raise AppError(
                 ErrorCode.MODEL_PROFILE_NOT_FOUND,
                 "Model profile does not exist",

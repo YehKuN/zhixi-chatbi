@@ -29,6 +29,7 @@ from server.error_handlers import (
     handle_validation_error,
 )
 from server.middleware import RequestIdMiddleware
+from server.routes.admin import router as admin_router
 from server.routes.auth import router as auth_router
 from server.routes.datasources import router as datasources_router
 from server.routes.deepseek import router as deepseek_router
@@ -150,6 +151,7 @@ def create_app(
             datalink=datalink,
         )
 
+    app.include_router(admin_router)
     app.include_router(auth_router)
     app.include_router(sessions_router)
     app.include_router(runs_router)

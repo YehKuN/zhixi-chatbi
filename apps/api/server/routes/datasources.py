@@ -70,6 +70,7 @@ from server.dependencies import (
     get_datalink_versions_service,
     get_dataset_overview_service,
     get_datasource_service,
+    get_internal_datasource_service,
     get_request_cancellation,
     inspect_datasource_in_background,
 )
@@ -77,6 +78,9 @@ from server.responses import success_response
 
 router = APIRouter(tags=["datasources"])
 DataSourceServiceDep = Annotated[DataSourceService, Depends(get_datasource_service)]
+InternalDataSourceServiceDep = Annotated[
+    DataSourceService, Depends(get_internal_datasource_service)
+]
 DatasetOverviewDep = Annotated[DatasetOverviewService, Depends(get_dataset_overview_service)]
 DataLinkVersionsDep = Annotated[DataLinkVersionsService, Depends(get_datalink_versions_service)]
 DataLinkValidationDep = Annotated[
@@ -92,7 +96,7 @@ DataLinkValidationDep = Annotated[
 async def consume_connection_grant(
     request: Request,
     payload: DataLinkConnectionGrantConsumeRequest,
-    service: DataSourceServiceDep,
+    service: InternalDataSourceServiceDep,
     authorization: Annotated[str | None, Header()] = None,
 ):
     """DataLink 专用内部授权消费端点；不进入公开 OpenAPI。"""

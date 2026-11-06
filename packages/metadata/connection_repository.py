@@ -22,12 +22,14 @@ class ConnectionRepository:
         config: dict,
         credential_ref: str,
         fingerprint: str,
+        enterprise_id: str | None = None,
     ) -> DataSourceModel:
         model = DataSourceModel(
             id=datasource_id,
             name=name,
             description=description,
             type="mysql",
+            enterprise_id=enterprise_id,
             source_kind="connection",
             connection_config_json=config,
             credential_ref=credential_ref,
