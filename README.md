@@ -63,6 +63,29 @@
 | --- | --- |
 | ![模型设置](assets/readme-model.png) | ![平台管理台](assets/readme-admin.png) |
 
+## 经营诊断（核心引擎）
+
+经营诊断回答“为什么变化”，而不是“变化了多少”。平台把指标口径、分组维度、时间粒度与用户假设编译成一条确定性流水线，模型只出现在两端——把中文解析成指标/维度/时间字段，以及把结构化结论写成可读叙述；中间的取数、计算与判定全部由可复现代码完成。
+
+```text
+一句中文问题
+   → 语义编译（metrics.yaml 受限公式 + 单条 SELECT + 只读门禁）
+   → 5 个确定性算子（decompose / segment_scan / trend / correlate / rank）
+   → 7 项不变量验证（贡献和、份额和、分组合计、非负计数、时间桶、join 扇出、公式版本）
+   → 假设枚举与打分 score = effect × consistency × quality × (1 − 反证占比)
+   → 瀑布图 + 结论 + 证据 + CSV 导出
+```
+
+| 能力 | 实现 |
+| --- | --- |
+| 贡献分解 | additive / mix / ratio 三类，贡献和必须等于总变化，证据标注“不构成因果证明” |
+| 分段扫描 | 维度分段贡献 + Benjamini–Hochberg 多重检验，低于最小样本的分段不标记显著 |
+| 趋势与异常 | 周/月聚合、缺失期检测、z-score / IQR 异常，时间桶唯一且顺序稳定 |
+| 相关与反证 | Pearson / Spearman，整体与分组方向相反时返回辛普森方向反转提示 |
+| 不确定性 | Wilson 区间、bootstrap、双比例检验、Welch t；至少三窗方向稳健性；小样本返回 insufficient 而非伪精确 |
+| 证据状态 | 每个算子输出 supported / invalid / insufficient 三态与方法、样本量、置信水平、caveat |
+| 可复现评测 | 固定 seed 生成 24 个月约 4.5 万行数据与 36 题题库，输出 Recipe Validity、EA、Driver Recall@3、Evidence Precision、Unsupported Claim Rate、Clarification Accuracy |
+
 ## 真实企业数据
 
 平台已接入两套公开、可追溯的真实企业数据，放在 `data/public/`，字段说明、来源与 DOI 见 [data/public/README.md](data/public/README.md)。
@@ -225,10 +248,6 @@ npm run build
 - Python 分析在 Docker 中执行：`--network none`、`--cpus 1`、`--memory 512m`、`--pids-limit 64`、`--cap-drop ALL`、只读根文件系统。
 - 字段遮蔽需显式确认，未确认的数据源不能创建真实 Run。
 - 在线演示使用两套公开数据集（UCI Bank Marketing / Online Shoppers），页面统一标注“真实数据”；`data/demo` 中的合成订单仅用于本地离线演示，并在界面与报告中标注“演示”来源。
-
-## 开源基线
-
-本项目在开源项目 **DataPilot**（[GitHub](https://github.com/w402116500/DataPilot)）的受控数据分析工作台基础上进行二次开发。DataPilot 为本团队指导教师门下学生的作品，**已获得原作者许可**；本作品在其基础上完成了中文企业场景产品化、经营驾驶舱、DeepSeek 流式问数、演示数据、证据呈现、评测体系与交付工程等改造。基线的版权与署名按原作者约定保留。
 
 ## 团队
 
