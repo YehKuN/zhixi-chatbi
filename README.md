@@ -1,4 +1,4 @@
-# 智析 ChatBI
+﻿# 智析 ChatBI
 
 > AI 对话式企业数据分析与可视化平台 · 第九届传智杯 AI WEB 网页开发挑战赛参赛作品 · Team YK
 
@@ -34,14 +34,34 @@
 
 | 模块 | 能力 |
 | --- | --- |
-| 经营驾驶舱 | 订单金额、活跃客户、客单价、毛利率；月度营收/毛利趋势、收入来源、区域 TOP5、经营预警 |
-| 智能问数 | 推荐问题、中文提问、DeepSeek 流式回答、失败降级、来源与截至日期标识 |
+| 经营驾驶舱 | 记录规模、购买转化率、覆盖月份、平均页面价值；月度记录与转化双轴趋势、流量来源结构、分组转化 TOP5、数据预警 |
+| 智能问数 | 推荐问题、中文提问、阶段状态、DeepSeek 流式回答、自动挂载产物图表、失败降级与稳定错误码 |
+| 智能工作台 | 独立全屏视图：历史会话切换与删除、图表导出、入场动效、背景壁纸（图片 / MP4 循环，IndexedDB 持久化） |
+| 洞察报告 | 结论、口径、证据状态与限制说明、报告内追问、图表联动、Markdown / CSV 导出 |
+| 经营诊断 | 期间对比、贡献分解、可能原因排序、不变量验证、一句话问诊断、CSV / 报告导出 |
 | 受控分析工作台 | Session / Run、阶段事件、Trace DAG、工具调用、SQL 审计、Artifact、证据引用、历史回放 |
-| DataLink 语义图谱 | Schema 建图、业务实体/属性/关系、字段映射、Join 线索、版本与修订、MCP 语义检索 |
-| 数据资产 | CSV / SQLite 上传、MySQL 连接、Schema 检查、字段遮蔽确认、DataLink 构建 |
+| 数据资产与语义图谱 | CSV / SQLite 上传、MySQL 连接、Schema 检查、字段遮蔽确认、DataLink 建图与版本、MCP 语义检索 |
 | 模型设置 | OpenAI-compatible 配置、能力探测、测试、激活；密钥只存服务端 |
-| 洞察报告 | 结论、口径、证据状态、限制说明、Markdown 导出 |
-| 项目台账 / 收支管理 | 项目阶段与进度、收入/成本/回款明细（演示记录，不写外部系统） |
+| 平台管理台 | 独立管理员鉴权、企业与成员治理、停用与重置密码、Token 用量统计 |
+| 数据导出 | 看板 CSV、报告 CSV / Markdown、图表原图、诊断 CSV；统一 UTF-8 BOM 与 RFC 4180 转义 |
+
+## 界面预览
+
+| 经营驾驶舱 | 智能问数出图 |
+| --- | --- |
+| ![经营驾驶舱](assets/readme-dashboard.png) | ![智能问数](assets/readme-query.png) |
+
+| 智能工作台（壁纸） | 洞察报告 |
+| --- | --- |
+| ![智能工作台](assets/readme-workbench.png) | ![洞察报告](assets/readme-report.png) |
+
+| 经营诊断 | 数据资产 |
+| --- | --- |
+| ![经营诊断](assets/readme-diagnosis.png) | ![数据资产](assets/readme-datasource.png) |
+
+| 模型设置 | 平台管理台 |
+| --- | --- |
+| ![模型设置](assets/readme-model.png) | ![平台管理台](assets/readme-admin.png) |
 
 ## 真实企业数据
 
@@ -79,17 +99,17 @@ DeepSeek Responses API    ← deepseek-flash（stream=true）
 **目录结构**
 
 ```text
-apps/web                 Vue 3 前端（8 个路由视图、42 个测试文件）
+apps/web                 Vue 3 前端（7 个路由视图、42 个测试文件）
 apps/api                 FastAPI 主服务（application / runtime / server）
 packages/agent_runtime   受控分析 Agent（状态机、合同、校验、上下文预算）
 packages/data_gateway    SQL 只读网关与连接器
 packages/contracts       跨层数据契约与 Run 事件
-packages/metadata        SQLAlchemy 模型与仓储（17 张表、31 个迁移）
+packages/metadata        SQLAlchemy 模型与仓储（20 张表、34 个迁移）
 services/datalink        语义图谱服务（REST + MCP）
 data/demo                906 条演示订单与汇总
 data/public              两套 UCI 真实企业数据（银行营销 / 在线商店）
 data/benchmark           20 题中文电商评测集（gold SQL + 期望答案）
-tests                    后端测试（46 个文件）
+tests                    后端测试（54 个文件）
 deploy                   生产镜像、Compose、Nginx 与沙箱 Dockerfile
 ```
 
@@ -167,7 +187,7 @@ py -3.12 -m venv .venv-sandbox
 | `DATALINK_BASE_URL` / `DATALINK_MCP_URL` | 是 | 默认 `http://localhost:8281` 与 `/mcp` |
 | `DATALINK_LLM_*` | 建图时 | DataLink 建图模型配置，密钥只走环境变量 |
 
-完整的 100+ 项配置见 [.env.example](.env.example)，含义与默认值见 [16-部署发布手册](docs/16-部署发布手册.md)。
+完整的 100+ 项配置见 [.env.example](.env.example)，逐项含义与生产部署步骤见提交包中的《配置与体验说明》。
 
 ## 测试与质量
 
@@ -204,7 +224,7 @@ npm run build
 - SQL 经过 SQLGlot AST 只读校验，拒绝写语句；默认 `LIMIT 100`，最大 `LIMIT 500`。
 - Python 分析在 Docker 中执行：`--network none`、`--cpus 1`、`--memory 512m`、`--pids-limit 64`、`--cap-drop ALL`、只读根文件系统。
 - 字段遮蔽需显式确认，未确认的数据源不能创建真实 Run。
-- 演示数据为合成数据，页面与报告始终标注“演示”来源。
+- 在线演示使用两套公开数据集（UCI Bank Marketing / Online Shoppers），页面统一标注“真实数据”；`data/demo` 中的合成订单仅用于本地离线演示，并在界面与报告中标注“演示”来源。
 
 ## 开源基线
 
@@ -224,4 +244,5 @@ npm run build
 
 ## 版本
 
-V1.0.1 · 2026-10-31 · 详见 [18-版本变更记录](docs/18-版本变更记录.md)
+V1.1 · 2026-11-17 · 参赛提交版（与线上生产环境一致）
+
