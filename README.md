@@ -51,7 +51,7 @@
 | --- | --- |
 | ![经营驾驶舱](assets/readme-dashboard.png) | ![智能问数](assets/readme-query.png) |
 
-| 智能工作台（壁纸） | 洞察报告 |
+| 智能工作台（夜间壁纸） | 洞察报告 |
 | --- | --- |
 | ![智能工作台](assets/readme-workbench.png) | ![洞察报告](assets/readme-report.png) |
 
