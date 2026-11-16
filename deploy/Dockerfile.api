@@ -9,14 +9,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # curl 供健康检查使用；docker-ce-cli 让 API 通过宿主机 Docker 启动分析沙箱容器。
-RUN apt-get update \
+# Debian 源换阿里云镜像，避免在国内构建时卡在 deb.debian.org。
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' \
+        /etc/apt/sources.list.d/debian.sources 2>/dev/null || true \
+    && apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates curl gnupg \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/debian/gpg \
         -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
+    && CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME") \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
-https://mirrors.aliyun.com/docker-ce/linux/debian bookworm stable" \
+https://mirrors.aliyun.com/docker-ce/linux/debian ${CODENAME} stable" \
         > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
     && apt-get install --no-install-recommends -y docker-ce-cli \

@@ -7,9 +7,11 @@ import {
   KeyRound,
   LoaderCircle,
   LogOut,
+  Moon,
   RefreshCw,
   Search,
   ShieldCheck,
+  Sun,
   Users,
   X,
   Zap,
@@ -17,9 +19,11 @@ import {
 
 import { ApiClientError } from "@/api/client";
 import type { AdminUserRow } from "@/api/admin";
+import { useTheme } from "@/lib/theme";
 import { useAdminStore } from "@/stores/adminStore";
 
 const admin = useAdminStore();
+const { isDark, toggleTheme } = useTheme();
 
 const loginForm = reactive({ username: "admin", password: "" });
 const loginError = ref("");
@@ -209,6 +213,16 @@ onMounted(async () => {
 
     <div v-if="!admin.isAuthenticated" class="admin-login-shell">
       <form class="admin-login-card" @submit.prevent="handleLogin">
+        <button
+          type="button"
+          class="admin-login-theme"
+          :title="isDark ? '切换日间模式' : '切换夜间模式'"
+          :aria-label="isDark ? '切换日间模式' : '切换夜间模式'"
+          @click="toggleTheme"
+        >
+          <Sun v-if="isDark" :size="15" />
+          <Moon v-else :size="15" />
+        </button>
         <div class="admin-login-brand">
           <img src="/chatbi-mark.svg" alt="" aria-hidden="true" />
           <div>
@@ -243,6 +257,7 @@ onMounted(async () => {
         </button>
 
         <small class="admin-login-foot">令牌有效期 12 小时，关闭标签页即退出</small>
+        <RouterLink class="admin-back-login" to="/login">← 返回企业登录</RouterLink>
       </form>
     </div>
 
@@ -261,6 +276,17 @@ onMounted(async () => {
             <RefreshCw :size="14" :class="{ 'adm-spin': admin.loading }" />
             刷新
           </button>
+          <button
+            type="button"
+            class="admin-ghost"
+            :title="isDark ? '切换日间模式' : '切换夜间模式'"
+            :aria-label="isDark ? '切换日间模式' : '切换夜间模式'"
+            @click="toggleTheme"
+          >
+            <Sun v-if="isDark" :size="14" />
+            <Moon v-else :size="14" />
+          </button>
+          <RouterLink class="admin-ghost" to="/login">返回企业登录</RouterLink>
           <button type="button" class="admin-ghost danger" @click="handleLogout">
             <LogOut :size="14" />
             退出

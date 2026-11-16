@@ -33,6 +33,7 @@ from server.routes.admin import router as admin_router
 from server.routes.auth import router as auth_router
 from server.routes.datasources import router as datasources_router
 from server.routes.deepseek import router as deepseek_router
+from server.routes.diagnosis import router as diagnosis_router
 from server.routes.model_profiles import router as model_profiles_router
 from server.routes.runs import router as runs_router
 from server.routes.sessions import router as sessions_router
@@ -157,5 +158,6 @@ def create_app(
     app.include_router(runs_router)
     app.include_router(model_profiles_router)
     app.include_router(datasources_router)
+    app.include_router(diagnosis_router)
     app.include_router(deepseek_router)
     return app

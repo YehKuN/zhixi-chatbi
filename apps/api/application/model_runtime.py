@@ -103,6 +103,8 @@ _OPENING_SYSTEM_PROMPT = (
     "表、字段、类型、表间关系、连接键属于结构信息，用 context_only；"
     "只有当前数据中的数值、分组或比较才用 evidence；"
     "clarification 不提交 requirements，只写一个具体澄清问题；"
+    "discovery 与 evidence 互斥：discovery 只能配 context_only 或 blocked 目标；"
+    "一旦包含 evidence 目标或 required_artifacts，必须使用 mode=ready，并省略 discovery_scope。"
     "discovery 必须同时提交非空的最小 discovery_scope。Session 背景只用于理解连续"
     "对话，历史 assistant 内容不是当前 Evidence 或 Claim；当前数据问题必须由本 Run 重新读取。"
     "追问要求给出差值、百分比、合计、比较、排序等数值结果时，一律属于「需要当前数据」："
@@ -121,8 +123,10 @@ _OPENING_REPAIR_SYSTEM_PROMPT = (
     "如果原 mode=ready 仍需要多个 assertion、多个指标或很长参数，"
     "允许改成 discovery 作为执行桥接；但必须保留用户原目标，"
     "并提交覆盖已明确对象所需的最小完整 discovery_scope，"
-    "不能是空 scope。不得把 discovery 改成 ready、clarification 或 general-task；"
-    "clarification、needs_semantic_context 也只能保持原 mode。"
+    "不能是空 scope。默认保持原 mode；只有当 finding 的 suggested_mode 明确为 ready"
+    "（discovery 携带 evidence 目标）时，才把 discovery 改为 ready，"
+    "并同时删除 discovery_scope、保留 evidence 目标；"
+    "clarification、needs_semantic_context 只能保持原 mode。"
     "非语义 mode 若携带 semantic_request，删除该字段并保持原 mode，"
     "禁止升为 needs_semantic_context。"
     "若原 mode 已是 needs_semantic_context，保持该 mode 并按 finding 修正请求。\n"
@@ -489,6 +493,16 @@ class OpenAICompatibleModelClient:
             if repair
             else ""
         )
+        if repair and any(issue.error_type == "json_invalid" for issue in repair_issues):
+            # JSON 结构错误通常来自过长或嵌套过深的计划；修复轮压到最小 discovery
+            # 合同，既保留用户目标，又显著降低再次输出畸形 JSON 的概率。
+            repair_hint += (
+                "本次 finding 属于 JSON 结构错误。为降低再次畸形，只提交最小可执行合同："
+                "优先 mode=discovery，requirements 只保留 1 条，省略 required_artifacts "
+                "与可选约束，discovery_scope 只列完成目标必需的字段，"
+                "并确保整个 JSON 对象完整闭合。\n"
+            )
+            repair_hint += _json_repair_guidance(repair_issues)
         prompt = _OPENING_REPAIR_SYSTEM_PROMPT if repair else _OPENING_SYSTEM_PROMPT
         prompt += (
             "\n服务端计划复杂度上限：每个 requirement 最多 "
@@ -586,36 +600,46 @@ class OpenAICompatibleModelClient:
         if not isinstance(response, AIMessage):
             return _opening_invalid_failure()
 
-        if response.invalid_tool_calls:
-            attempted_analysis = (
-                len(response.invalid_tool_calls) == 1
-                and not response.tool_calls
-                and response.invalid_tool_calls[0].get("name") == "start_data_analysis"
-            )
-            return _opening_invalid_failure(
-                [
-                    OpeningValidationIssue(
-                        path="response.invalid_tool_calls",
-                        error_type="json_invalid",
-                        repair_reason="shape_invalid",
-                        actual=_invalid_tool_call_diagnostic(response),
-                        expected="一个完整合法 JSON 对象",
-                        rule="非法工具参数不能作为有效计划，也不能忽略后改为普通答案",
-                        action=(
-                            "按 actual 的行列位置检查 JSON；missing_final_object_closers 表示"
-                            "已确认缺失的末尾对象闭合括号数量。重新提交完整 start_data_analysis。"
-                        ),
-                    )
-                ],
-                attempt_summary=(
-                    RunOpeningAttemptSummary(attempted_protocol="data-analysis")
-                    if attempted_analysis
-                    else None
-                ),
-            )
-
         tool_calls = response.tool_calls
         content = _stream_chunk_text(response)
+        if response.invalid_tool_calls:
+            salvaged_call = _salvage_tool_call(response, "start_data_analysis")
+            if salvaged_call is None:
+                logger.warning(
+                    "Opening tool call invalid: %s", _invalid_tool_call_diagnostic(response)
+                )
+                attempted_analysis = (
+                    len(response.invalid_tool_calls) == 1
+                    and not response.tool_calls
+                    and response.invalid_tool_calls[0].get("name") == "start_data_analysis"
+                )
+                return _opening_invalid_failure(
+                    [
+                        OpeningValidationIssue(
+                            path="response.invalid_tool_calls",
+                            error_type="json_invalid",
+                            repair_reason="shape_invalid",
+                            actual=_invalid_tool_call_diagnostic(response),
+                            expected="一个完整合法 JSON 对象",
+                            rule="非法工具参数不能作为有效计划，也不能忽略后改为普通答案",
+                            action=(
+                                "按 actual 的行列位置检查 JSON；missing_final_object_closers 表示"
+                                "已确认缺失的末尾对象闭合括号数量。重新提交完整"
+                                " start_data_analysis。"
+                            ),
+                        )
+                    ],
+                    attempt_summary=(
+                        RunOpeningAttemptSummary(attempted_protocol="data-analysis")
+                        if attempted_analysis
+                        else None
+                    ),
+                )
+            logger.warning(
+                "Opening tool call salvaged trailing closers: %s",
+                _invalid_tool_call_diagnostic(response),
+            )
+            tool_calls = [salvaged_call]
         if tool_calls:
             if len(tool_calls) != 1 or content.strip():
                 return _opening_invalid_failure()
@@ -1292,6 +1316,37 @@ class _PlanArgumentsNormalizationError(ValueError):
         self.reason = reason
 
 
+def _normalize_plan_mode(plan: dict[str, object]) -> dict[str, object]:
+    """把互相矛盾的模式标签归一化为可执行模式。
+
+    discovery 携带 evidence 目标时，计划在语义上已经是可执行的 ready 合同；
+    ready 携带 discovery_scope 时，探索范围也不应继续保留。此处只修正标签，
+    不改变目标、断言或产物，避免把可执行计划白白送进修复轮。
+    """
+
+    mode = plan.get("mode")
+    if mode not in {"ready", "discovery"}:
+        return plan
+    requirements = plan.get("requirements")
+    has_evidence = isinstance(requirements, list) and any(
+        isinstance(item, Mapping)
+        and isinstance(item.get("fulfillment"), Mapping)
+        and item["fulfillment"].get("mode") == "evidence"
+        for item in requirements
+    )
+    if mode == "discovery" and has_evidence:
+        logger.info(
+            "Opening plan normalized discovery->ready: executable evidence requirements present"
+        )
+        plan["mode"] = "ready"
+        plan.pop("discovery_scope", None)
+        return plan
+    if mode == "ready" and "discovery_scope" in plan:
+        logger.info("Opening plan normalized: removed discovery_scope from ready plan")
+        plan.pop("discovery_scope", None)
+    return plan
+
+
 def _normalize_plan_arguments(input_value: object) -> dict[str, object]:
     """只把 args.plan 的单层 JSON 对象字符串解码一次。"""
 
@@ -1300,7 +1355,7 @@ def _normalize_plan_arguments(input_value: object) -> dict[str, object]:
     normalized = dict(input_value)
     raw_plan = normalized.get("plan")
     if isinstance(raw_plan, Mapping):
-        normalized["plan"] = dict(raw_plan)
+        normalized["plan"] = _normalize_plan_mode(dict(raw_plan))
         return normalized
     if not isinstance(raw_plan, str):
         return normalized
@@ -1310,11 +1365,13 @@ def _normalize_plan_arguments(input_value: object) -> dict[str, object]:
         )
     try:
         decoded = json.loads(raw_plan)
-    except json.JSONDecodeError as exc:
-        raise _PlanArgumentsNormalizationError("plan_json_invalid") from exc
+    except json.JSONDecodeError:
+        decoded = _decode_with_extra_final_closers(raw_plan)
+        if decoded is None:
+            raise _PlanArgumentsNormalizationError("plan_json_invalid") from None
     if not isinstance(decoded, Mapping):
         raise _PlanArgumentsNormalizationError("decoded_plan_not_object")
-    normalized["plan"] = dict(decoded)
+    normalized["plan"] = _normalize_plan_mode(dict(decoded))
     return normalized
 
 
@@ -1738,8 +1795,8 @@ def _opening_value_error_projection(
             "discovery 只能包含 context_only 或 blocked 目标",
             "Discovery 观察不是正式 Evidence/Claim 计划",
             (
-                "如果已经明确最终指标和证据，请把 plan.mode 改为 ready；否则删除 "
-                "evidence assertion 并保留受限 discovery。"
+                "如果已经明确最终指标和证据，请把 plan.mode 改为 ready，"
+                "并删除 plan.discovery_scope；否则删除 evidence assertion 并保留受限 discovery。"
             ),
             "ready",
         )
@@ -1880,8 +1937,8 @@ def _opening_error_action(error_type: str, path: str, context: object) -> str:
         detail = str(context.get("error") or "")
         if "discovery plan cannot contain evidence assertions" in detail:
             return (
-                "该计划已经包含可执行 evidence assertions；把 plan.mode 改为 ready。"
-                "只有尚不能定义正式证据目标时才使用 discovery。"
+                "该计划已经包含可执行 evidence assertions；把 plan.mode 改为 ready，"
+                "并删除 discovery_scope。只有尚不能定义正式证据目标时才使用 discovery。"
             )
     return "按 Tool Schema 修正该路径的类型、层级或取值，不要添加未声明字段。"
 
@@ -1954,6 +2011,72 @@ def _invalid_tool_call_kind(response: AIMessage) -> str:
     return "invalid_tool_call"
 
 
+def _decode_with_extra_final_closers(arguments: str) -> dict[str, Any] | None:
+    """回收「完整 JSON 之后多写了若干右花括号」的模型参数。
+
+    真实会话中观察到模型把完整对象多闭合一次，解析器报 ``Extra data``。
+    多出的 ``}`` 不携带任何计划信息，去掉后仍是模型的原始意图；缺失闭合
+    括号、截断或其它语法错误一律不修复。
+    """
+
+    if len(arguments) > 256 * 1024:
+        return None
+    try:
+        value, end = json.JSONDecoder().raw_decode(arguments)
+    except (ValueError, RecursionError):
+        return None
+    remainder = arguments[end:]
+    if not remainder or "}" not in remainder or remainder.strip(" \t\r\n}"):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _salvage_tool_call(response: AIMessage, tool_name: str) -> dict[str, Any] | None:
+    """把唯一指定工具调用的尾部多余闭合括号还原为合法调用。"""
+
+    if response.tool_calls or len(response.invalid_tool_calls) != 1:
+        return None
+    item = response.invalid_tool_calls[0]
+    if not isinstance(item, Mapping) or item.get("name") != tool_name:
+        return None
+    call_id = item.get("id")
+    raw_arguments = item.get("args")
+    if not isinstance(call_id, str) or not call_id or not isinstance(raw_arguments, str):
+        return None
+    arguments = _decode_with_extra_final_closers(raw_arguments)
+    if arguments is None:
+        return None
+    return {
+        "name": tool_name,
+        "args": arguments,
+        "id": call_id,
+        "type": "tool_call",
+    }
+
+
+def _json_error_kind(exc: json.JSONDecodeError) -> str:
+    """把解析器消息归为稳定的语法错误类别，供定向修复提示使用。"""
+
+    message = exc.msg.lower()
+    if message.startswith("extra data"):
+        return "extra_data"
+    if message.startswith("unterminated string"):
+        return "unterminated_string"
+    if message.startswith("expecting property name"):
+        return "property_name"
+    if message.startswith("expecting value"):
+        return "expecting_value"
+    if message.startswith("expecting ',' delimiter"):
+        return "missing_comma"
+    if message.startswith("expecting ':' delimiter"):
+        return "missing_colon"
+    if "invalid \\escape" in message:
+        return "invalid_escape"
+    if "invalid control character" in message:
+        return "control_character"
+    return "invalid_json"
+
+
 def _invalid_tool_call_diagnostic(response: AIMessage) -> str:
     """Expose only safe parser position facts, never invalid provider arguments."""
 
@@ -1969,7 +2092,16 @@ def _invalid_tool_call_diagnostic(response: AIMessage) -> str:
         try:
             json.loads(args)
         except json.JSONDecodeError as exc:
-            details = f"json_decode_error line={exc.lineno} column={exc.colno} char={exc.pos}"
+            details = (
+                f"json_decode_error kind={_json_error_kind(exc)} "
+                f"line={exc.lineno} column={exc.colno} char={exc.pos}"
+            )
+            if exc.msg.lower().startswith("extra data"):
+                extra = args[exc.pos :]
+                if extra and not extra.strip(" \t\r\n}"):
+                    details += f" extra_final_closers={extra.count('}')}"
+                elif extra.strip():
+                    details += " trailing_content=true"
             # Only claim a missing final brace when adding it makes the whole
             # document valid. This does not alter or accept the tool call.
             if exc.pos == len(args.rstrip()):
@@ -1984,6 +2116,32 @@ def _invalid_tool_call_diagnostic(response: AIMessage) -> str:
         except (ValueError, RecursionError):
             continue
     return _invalid_tool_call_kind(response)
+
+
+def _json_repair_guidance(issues: Sequence[OpeningValidationIssue]) -> str:
+    """按已分类的语法错误生成最小修复提示，不回显参数原文。"""
+
+    actual = " ".join(issue.actual for issue in issues if issue.error_type == "json_invalid")
+    if not actual:
+        return ""
+    hints: list[str] = []
+    if "extra_final_closers=" in actual:
+        hints.append("删除完整 JSON 对象结束后多写的右花括号。")
+    if "trailing_content=true" in actual:
+        hints.append("删除 JSON 对象结束后的所有文字，只保留一个 JSON 对象。")
+    if "missing_final_object_closers=" in actual:
+        hints.append("上一轮参数缺少末尾闭合括号，可能已被截断；压缩计划并确保整个对象完整闭合。")
+    if "kind=property_name" in actual:
+        hints.append("检查对象最后一项后的逗号与键名，删除尾随逗号并统一使用双引号。")
+    if "kind=unterminated_string" in actual:
+        hints.append("字符串没有闭合；缩短文本并补全双引号。")
+    if "kind=missing_comma" in actual:
+        hints.append("检查相邻字段或数组元素之间是否缺少逗号。")
+    if "kind=invalid_escape" in actual:
+        hints.append("检查字符串中的反斜杠转义是否合法。")
+    if not hints:
+        hints.append("按 actual 的行列位置重新提交一个完整、合法的 JSON 对象。")
+    return "JSON 结构修复要求：" + "".join(hints) + "\n"
 
 
 def _inspect_finalization_response(
@@ -2012,6 +2170,13 @@ def _inspect_finalization_response(
             )
         ]
     if invalid_count:
+        salvaged_call = _salvage_tool_call(response, "finalize_analysis_plan")
+        if salvaged_call is not None:
+            logger.warning(
+                "Finalization tool call salvaged trailing closers: %s",
+                _invalid_tool_call_diagnostic(response),
+            )
+            return salvaged_call, []
         return None, [
             _finalization_issue(
                 "response.invalid_tool_calls",
@@ -2067,11 +2232,19 @@ def _finalization_human_content(
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    return (
+    content = (
         f"{payload}\n本次脱敏校验 finding：{repair_json}\n"
         "请逐项修复 finding 指向的路径，并重新提交恰好一次无正文的 finalize_analysis_plan 调用；"
         "不要只返回局部补丁，不要输出解释正文。"
     )
+    if any(issue.error_type == "json_invalid" for issue in issues):
+        content += (
+            "\n本次 finding 属于 JSON 结构错误。为降低再次畸形，只提交最小 ready 计划："
+            "保留原目标和必要交付，每个 requirement 只保留 1 个核心 assertion，"
+            "省略可选约束，并确保整个 JSON 对象完整闭合。"
+        )
+        content += _json_repair_guidance(issues)
+    return content
 
 
 def _finalization_issue(

@@ -15,6 +15,8 @@ from application.datalink_validation import DataLinkValidationService
 from application.datalink_versions import DataLinkVersionsService
 from application.dataset_overview import DatasetOverviewService
 from application.datasource_factory import build_datasource_service
+from application.diagnosis_intent import DiagnosisIntentService
+from application.diagnosis_service import DiagnosisService
 from application.datasources import DataSourceService
 from application.model_capability_probe import LangChainModelCapabilityProbe
 from application.model_profiles import ModelProfileService
@@ -244,6 +246,35 @@ def get_dataset_overview_service(
         datasources,
         request.app.state.overview_cache,
         query_timeout_seconds=settings.query_timeout_seconds,
+    )
+
+
+def get_diagnosis_service(
+    datasources: Annotated[DataSourceService, Depends(get_datasource_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> DiagnosisService:
+    """诊断引擎复用数据源只读网关与企业作用域，不直接读取上传文件。"""
+
+    return DiagnosisService(
+        datasources,
+        query_timeout_seconds=settings.query_timeout_seconds,
+    )
+
+
+def get_diagnosis_intent_service(
+    datasources: Annotated[DataSourceService, Depends(get_datasource_service)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    cipher: Annotated[SecretCipher, Depends(get_cipher)],
+    auth: Annotated[AuthContext | None, Depends(get_auth_scope)],
+) -> DiagnosisIntentService:
+    """自然语言入口按企业读取激活模型；没有模型时由规则解析兜底。"""
+
+    return DiagnosisIntentService(
+        datasources,
+        ModelProfileRepository(db),
+        SecretRepository(db),
+        cipher,
+        enterprise_id=auth.enterprise.id if auth is not None else None,
     )
 
 

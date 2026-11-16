@@ -57,6 +57,7 @@
 }
 
 .admin-login-card {
+  position: relative;
   display: grid;
   width: min(400px, 100%);
   gap: 14px;
@@ -734,6 +735,25 @@
   }
 }
 
+a.admin-ghost {
+  text-decoration: none;
+}
+
+.admin-back-login {
+  display: inline-flex;
+  align-self: center;
+  justify-self: center;
+  margin-top: 4px;
+  color: var(--adm-muted);
+  font-size: 12px;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.admin-back-login:hover {
+  color: var(--adm-cyan);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .admin-page *,
   .admin-page *::before,
@@ -741,4 +761,292 @@
     animation: none !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.admin-login-theme {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid rgba(104, 157, 204, 0.22);
+  border-radius: 8px;
+  background: rgba(18, 38, 60, 0.5);
+  color: #a7bad1;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+
+.admin-login-theme:hover {
+  border-color: rgba(83, 214, 255, 0.4);
+  background: rgba(28, 60, 91, 0.5);
+  color: #d5f2ff;
+}
+
+/* ---------- 管理台日间模式：与登录页浅蓝紫体系一致 ---------- */
+html[data-theme="light"] .app-shell:has(.admin-page) {
+  background: #eaf2ff;
+}
+
+html[data-theme="light"] .admin-page {
+  --adm-bg: #eef3ff;
+  --adm-panel: rgba(255, 255, 255, 0.9);
+  --adm-border: #dfe7f7;
+  --adm-text: #172454;
+  --adm-muted: #5f6d92;
+  --adm-cyan: #2f7df6;
+  --adm-violet: #7d5bee;
+  --adm-green: #2f9e7a;
+  --adm-amber: #b56f12;
+  background:
+    radial-gradient(ellipse at 78% 4%, rgba(91, 107, 239, 0.1), transparent 34%),
+    radial-gradient(ellipse at 14% 92%, rgba(125, 91, 238, 0.08), transparent 38%),
+    linear-gradient(128deg, #eaf5ff, #eef2ff 44%, #f4edff);
+  color: var(--adm-text);
+}
+
+html[data-theme="light"] .admin-page .admin-aurora {
+  background: rgba(91, 107, 239, 0.06);
+}
+
+html[data-theme="light"] .admin-page .admin-login-card {
+  border-color: #dfe7f7;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 30px 70px rgba(23, 36, 84, 0.12);
+}
+
+html[data-theme="light"] .admin-page .admin-login-brand small,
+html[data-theme="light"] .admin-page .admin-login-foot,
+html[data-theme="light"] .admin-page .admin-brand small {
+  color: #7b88a8;
+}
+
+html[data-theme="light"] .admin-page .admin-field > span {
+  color: #5f6d92;
+}
+
+html[data-theme="light"] .admin-page .admin-field input {
+  border-color: #dfe7f7;
+  background: #f7f9ff;
+  color: #172454;
+}
+
+html[data-theme="light"] .admin-page .admin-field input:focus {
+  border-color: #a9bcf0;
+  box-shadow: 0 0 0 3px rgba(91, 107, 239, 0.08);
+}
+
+html[data-theme="light"] .admin-page .admin-primary {
+  background: linear-gradient(120deg, #4c9bff, #5b6bef 60%, #7d5bee);
+  box-shadow: 0 10px 24px rgba(91, 107, 239, 0.22);
+}
+
+html[data-theme="light"] .admin-page .admin-alert {
+  border-color: rgba(178, 59, 70, 0.24);
+  background: rgba(178, 59, 70, 0.06);
+  color: #b23b46;
+}
+
+html[data-theme="light"] .admin-page .admin-login-theme {
+  border-color: #dfe7f7;
+  background: #f4f7ff;
+  color: #5f6d92;
+}
+
+html[data-theme="light"] .admin-page .admin-login-theme:hover {
+  border-color: #b9c9ee;
+  background: #eef3ff;
+  color: #3a4bbf;
+}
+
+html[data-theme="light"] .admin-page .admin-topbar {
+  border-bottom-color: #dfe7f7;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+html[data-theme="light"] .admin-page .admin-live {
+  color: #2f8f6f;
+}
+
+html[data-theme="light"] .admin-page .admin-live i {
+  background: #2f9e7a;
+  box-shadow: 0 0 8px rgba(47, 158, 122, 0.45);
+}
+
+html[data-theme="light"] .admin-page .admin-ghost {
+  border-color: #dfe7f7;
+  background: #f4f7ff;
+  color: #5f6d92;
+}
+
+html[data-theme="light"] .admin-page .admin-ghost:hover:not(:disabled) {
+  border-color: #b9c9ee;
+  background: #eef3ff;
+  color: #3a4bbf;
+}
+
+html[data-theme="light"] .admin-page .admin-ghost.danger {
+  border-color: rgba(178, 59, 70, 0.22);
+  color: #b23b46;
+}
+
+html[data-theme="light"] .admin-page .admin-ghost.danger:hover {
+  background: rgba(178, 59, 70, 0.06);
+  color: #a02f39;
+}
+
+html[data-theme="light"] .admin-page .admin-kpi {
+  border-color: #dfe7f7;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+html[data-theme="light"] .admin-page .admin-kpi small {
+  color: #6b7899;
+}
+
+html[data-theme="light"] .admin-page .admin-kpi em {
+  color: #7b88a8;
+}
+
+html[data-theme="light"] .admin-page .admin-panel {
+  border-color: #dfe7f7;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+html[data-theme="light"] .admin-page .admin-panel-head p {
+  color: #6b7899;
+}
+
+html[data-theme="light"] .admin-page .admin-search,
+html[data-theme="light"] .admin-page .admin-filters select {
+  border-color: #dfe7f7;
+  background: #f7f9ff;
+  color: #5f6d92;
+}
+
+html[data-theme="light"] .admin-page .admin-search input {
+  color: #172454;
+}
+
+html[data-theme="light"] .admin-page .admin-table th {
+  border-bottom-color: #e6ecf8;
+  color: #7b88a8;
+}
+
+html[data-theme="light"] .admin-page .admin-table td {
+  border-bottom-color: #edf1fa;
+  color: #5f6d92;
+}
+
+html[data-theme="light"] .admin-page .admin-table tbody tr:hover td {
+  background: #f4f7ff;
+}
+
+html[data-theme="light"] .admin-page .adm-strong {
+  color: #22305c;
+}
+
+html[data-theme="light"] .admin-page .adm-sub,
+html[data-theme="light"] .admin-page .admin-pager,
+html[data-theme="light"] .admin-page .admin-empty {
+  color: #7b88a8;
+}
+
+html[data-theme="light"] .admin-page .adm-code {
+  color: #4a5bd6;
+}
+
+html[data-theme="light"] .admin-page .adm-token {
+  color: #2f6fd0;
+}
+
+html[data-theme="light"] .admin-page .adm-tag {
+  border-color: #dfe7f7;
+  background: #f4f7ff;
+  color: #5f6d92;
+}
+
+html[data-theme="light"] .admin-page .adm-tag.violet {
+  border-color: rgba(125, 91, 238, 0.2);
+  background: rgba(125, 91, 238, 0.08);
+  color: #6d4fd8;
+}
+
+html[data-theme="light"] .admin-page .adm-status.on {
+  color: #2f8f6f;
+}
+
+html[data-theme="light"] .admin-page .adm-status.on::before {
+  background: #2f9e7a;
+  box-shadow: 0 0 7px rgba(47, 158, 122, 0.4);
+}
+
+html[data-theme="light"] .admin-page .adm-status.off {
+  color: #b23b46;
+}
+
+html[data-theme="light"] .admin-page .adm-status.off::before {
+  background: #c43d46;
+}
+
+html[data-theme="light"] .admin-page .adm-action {
+  border-color: #dfe7f7;
+  background: #f4f7ff;
+  color: #5f6d92;
+}
+
+html[data-theme="light"] .admin-page .adm-action:hover {
+  border-color: #b9c9ee;
+  color: #3a4bbf;
+}
+
+html[data-theme="light"] .admin-page .adm-action.danger {
+  border-color: rgba(178, 59, 70, 0.22);
+  color: #b23b46;
+}
+
+html[data-theme="light"] .admin-page .admin-empty {
+  border-color: #dfe7f7;
+}
+
+html[data-theme="light"] .admin-page .admin-pager {
+  border-top-color: #edf1fa;
+}
+
+html[data-theme="light"] .admin-page .admin-modal-backdrop {
+  background: rgba(23, 36, 84, 0.28);
+}
+
+html[data-theme="light"] .admin-page .admin-modal {
+  border-color: #dfe7f7;
+  background: #fff;
+  box-shadow: 0 26px 60px rgba(23, 36, 84, 0.16);
+}
+
+html[data-theme="light"] .admin-page .admin-modal p {
+  color: #5f6d92;
+}
+
+html[data-theme="light"] .admin-page .adm-icon {
+  color: #7b88a8;
+}
+
+html[data-theme="light"] .admin-page .adm-icon:hover {
+  background: #eef3ff;
+  color: #22305c;
+}
+
+html[data-theme="light"] .admin-page .admin-toast {
+  border-color: rgba(47, 158, 122, 0.24);
+  background: rgba(240, 255, 250, 0.98);
+  color: #2f8f6f;
+  box-shadow: 0 12px 26px rgba(23, 36, 84, 0.12);
+}
+
+html[data-theme="light"] .admin-page .admin-toast.error {
+  border-color: rgba(178, 59, 70, 0.24);
+  background: rgba(255, 244, 246, 0.98);
+  color: #b23b46;
 }

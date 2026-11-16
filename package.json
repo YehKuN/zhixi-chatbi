@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --config apps/web/vite.config.ts",
-    "build": "vue-tsc -p apps/web/tsconfig.app.json --noEmit && vite build --config apps/web/vite.config.ts",
+    "build": "vue-tsc -p apps/web/tsconfig.build.json --noEmit && vite build --config apps/web/vite.config.ts",
     "typecheck": "vue-tsc -p apps/web/tsconfig.app.json --noEmit",
     "lint": "vue-tsc -p apps/web/tsconfig.app.json --noEmit",
     "test": "vitest run --config apps/web/vite.config.ts"

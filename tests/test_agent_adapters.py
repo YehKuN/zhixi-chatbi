@@ -919,6 +919,30 @@ async def test_model_runtime_opening_repair_preserves_protocol_direction() -> No
 
 
 @pytest.mark.asyncio
+async def test_opening_repair_json_invalid_requests_minimal_discovery() -> None:
+    chat = RecordingChatModel()
+    issue = OpeningValidationIssue(
+        path="response.invalid_tool_calls",
+        error_type="json_invalid",
+        action="重新提交完整 start_data_analysis。",
+    )
+
+    await _client(chat).open_run(
+        "给我也画该数据的饼图",
+        _source().schema_summary,
+        FakeCancellation(),
+        opening_context=_opening_context("给我也画该数据的饼图"),
+        repair=True,
+        repair_issues=[issue],
+    )
+
+    prompt = "\n".join(message.content for message in chat.calls[1][1])
+    assert "本次 finding 属于 JSON 结构错误" in prompt
+    assert "requirements 只保留 1 条" in prompt
+    assert "省略 required_artifacts" in prompt
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("content", ["", "ordinary answer"])
 async def test_opening_invalid_json_preserves_direction_and_safe_diagnostic(content: str) -> None:
     chat = RecordingChatModel()
@@ -948,6 +972,66 @@ async def test_opening_invalid_json_preserves_direction_and_safe_diagnostic(cont
     assert "missing_final_object_closers=1" in issue.actual
     assert "do-not-expose" not in result.model_dump_json()
     assert chat.opening_response.invalid_tool_calls[0]["args"] == raw
+
+
+@pytest.mark.asyncio
+async def test_opening_salvages_extra_final_object_closer() -> None:
+    chat = RecordingChatModel()
+    arguments = _analysis_opening_message().tool_calls[0]["args"]
+    raw = json.dumps(arguments, ensure_ascii=False) + "}"
+    chat.opening_response = AIMessage(
+        content="",
+        invalid_tool_calls=[
+            {
+                "name": "start_data_analysis",
+                "args": raw,
+                "id": "invalid-opening-extra-closer",
+                "error": "JSONDecodeError: Extra data: line 1 column 999 (char 998)",
+                "type": "invalid_tool_call",
+            }
+        ],
+    )
+
+    result = await _client(chat).open_run(
+        "给我也画该数据的饼图",
+        _source().schema_summary,
+        FakeCancellation(),
+        opening_context=_opening_context("给我也画该数据的饼图"),
+    )
+
+    assert isinstance(result, RunOpeningDecision)
+    assert result.protocol_id == "data-analysis"
+    assert result.plan.mode == "ready"
+    assert len([call for call in chat.calls if call[0] == "ainvoke"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_opening_does_not_salvage_non_closer_trailing_text() -> None:
+    chat = RecordingChatModel()
+    arguments = _analysis_opening_message().tool_calls[0]["args"]
+    raw = json.dumps(arguments, ensure_ascii=False) + "}x"
+    chat.opening_response = AIMessage(
+        content="",
+        invalid_tool_calls=[
+            {
+                "name": "start_data_analysis",
+                "args": raw,
+                "id": "invalid-opening-trailing-text",
+                "error": "JSONDecodeError: Extra data: line 1 column 999 (char 998)",
+                "type": "invalid_tool_call",
+            }
+        ],
+    )
+
+    result = await _client(chat).open_run(
+        "给我也画该数据的饼图",
+        _source().schema_summary,
+        FakeCancellation(),
+        opening_context=_opening_context("给我也画该数据的饼图"),
+    )
+
+    assert isinstance(result, RunOpeningInvalidFailure)
+    assert result.validation_issues[0].error_type == "json_invalid"
 
 
 @pytest.mark.asyncio
@@ -1701,41 +1785,6 @@ async def test_model_runtime_opening_request_failure_logs_only_safe_type(
             "已提供",
             "删除 semantic_request",
         ),
-        (
-            {
-                "mode": "discovery",
-                "discovery_scope": {
-                    "tables": ["dataset"],
-                    "columns": ["dataset.value"],
-                },
-                "requirements": [
-                    {
-                        "description": "统计值",
-                        "acceptance_criteria": ["返回统计值"],
-                        "fulfillment": {
-                            "mode": "evidence",
-                            "assertions": [
-                                {
-                                    "description": "读取值",
-                                    "claim_extractions": [
-                                        {
-                                            "mode": "scalar",
-                                            "name": "值",
-                                            "field": "value",
-                                            "required": True,
-                                        }
-                                    ],
-                                }
-                            ],
-                        },
-                    }
-                ],
-            },
-            "plan.requirements[0].fulfillment.mode",
-            "protocol_direction_conflict",
-            "evidence",
-            "plan.mode 改为 ready",
-        ),
     ],
 )
 async def test_model_runtime_opening_shape_errors_are_field_specific(
@@ -1773,6 +1822,73 @@ async def test_model_runtime_opening_shape_errors_are_field_specific(
         assert "把 mode 改为 needs_semantic_context" not in issue.action
         assert issue.suggested_mode == "ready"
     assert "call_opening" not in issue.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_opening_accepts_discovery_plan_with_evidence_as_ready() -> None:
+    chat = RecordingChatModel()
+    chat.opening_response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call_opening",
+                "name": "start_data_analysis",
+                "type": "tool_call",
+                "args": {
+                    "plan": {
+                        "mode": "discovery",
+                        "discovery_scope": {
+                            "tables": ["dataset"],
+                            "columns": ["dataset.value"],
+                            "max_rows": 100,
+                        },
+                        "requirements": [
+                            {
+                                "description": "生成饼图",
+                                "acceptance_criteria": ["返回分组占比"],
+                                "fulfillment": {
+                                    "mode": "evidence",
+                                    "assertions": [
+                                        {
+                                            "description": "统计分组占比",
+                                            "source_tables": ["dataset"],
+                                            "result_columns": ["segment", "share"],
+                                            "claim_extractions": [
+                                                {
+                                                    "mode": "scalar",
+                                                    "name": "占比",
+                                                    "field": "share",
+                                                    "required": True,
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                },
+                            }
+                        ],
+                        "execution_constraints": {
+                            "required_artifacts": [
+                                {"kind": "chart", "description": "分组占比饼图"}
+                            ]
+                        },
+                    }
+                },
+            }
+        ],
+    )
+
+    result = await _client(chat).open_run(
+        "给我对应数据的饼状图",
+        _source().schema_summary,
+        FakeCancellation(),
+        opening_context=_opening_context("给我对应数据的饼状图"),
+    )
+
+    assert isinstance(result, RunOpeningDecision)
+    assert result.protocol_id == "data-analysis"
+    assert result.plan.mode == "ready"
+    assert result.plan.discovery_scope is None
+    assert result.plan.execution_constraints.required_artifacts
 
 
 def test_opening_validation_issue_occurrences_group_by_required_four_tuple() -> None:
@@ -2222,6 +2338,102 @@ def test_finalization_json_diagnostic_uses_parser_position_without_raw_values(
     assert response.invalid_tool_calls[0]["args"] == arguments
 
 
+def test_json_diagnostic_classifies_extra_final_closer() -> None:
+    from application.model_runtime import _invalid_tool_call_diagnostic
+
+    response = AIMessage(
+        content="",
+        invalid_tool_calls=[
+            {
+                "name": "finalize_analysis_plan",
+                "args": '{"plan":{"mode":"ready"}}}',
+                "id": "call_extra_closer",
+                "error": "JSONDecodeError: Extra data",
+                "type": "invalid_tool_call",
+            }
+        ],
+    )
+
+    diagnostic = _invalid_tool_call_diagnostic(response)
+
+    assert "kind=extra_data" in diagnostic
+    assert "extra_final_closers=1" in diagnostic
+
+
+def test_plan_arguments_salvage_extra_final_closer() -> None:
+    from application.model_runtime import _normalize_plan_arguments
+
+    normalized = _normalize_plan_arguments(
+        {"plan": '{"mode":"ready","requirements":[]}}'}
+    )
+
+    assert normalized["plan"] == {"mode": "ready", "requirements": []}
+
+
+def test_plan_arguments_normalize_discovery_evidence_to_ready() -> None:
+    from application.model_runtime import _normalize_plan_arguments
+
+    normalized = _normalize_plan_arguments(
+        {
+            "plan": {
+                "mode": "discovery",
+                "discovery_scope": {
+                    "tables": ["dataset"],
+                    "columns": ["dataset.value"],
+                    "max_rows": 100,
+                },
+                "requirements": [
+                    {
+                        "description": "生成饼图",
+                        "acceptance_criteria": ["返回分组占比"],
+                        "fulfillment": {
+                            "mode": "evidence",
+                            "assertions": [
+                                {
+                                    "description": "统计分组占比",
+                                    "source_tables": ["dataset"],
+                                    "result_columns": ["segment", "share"],
+                                    "claim_extractions": [],
+                                }
+                            ],
+                        },
+                    }
+                ],
+                "execution_constraints": {
+                    "required_artifacts": [
+                        {"kind": "chart", "description": "分组占比饼图"}
+                    ]
+                },
+            }
+        }
+    )
+
+    plan = normalized["plan"]
+    assert plan["mode"] == "ready"
+    assert "discovery_scope" not in plan
+    assert plan["execution_constraints"]["required_artifacts"]
+
+
+def test_plan_arguments_drop_discovery_scope_for_ready_plan() -> None:
+    from application.model_runtime import _normalize_plan_arguments
+
+    normalized = _normalize_plan_arguments(
+        {
+            "plan": {
+                "mode": "ready",
+                "discovery_scope": {
+                    "tables": ["dataset"],
+                    "columns": ["dataset.value"],
+                },
+                "requirements": [{"fulfillment": {"mode": "evidence"}}],
+            }
+        }
+    )
+
+    assert normalized["plan"]["mode"] == "ready"
+    assert "discovery_scope" not in normalized["plan"]
+
+
 def _discovery_finalization_request() -> AnalysisPlanFinalizationRequest:
     return AnalysisPlanFinalizationRequest(
         question="先探索一下这份数据",
@@ -2295,6 +2507,67 @@ async def test_model_runtime_finalization_repairs_invalid_tool_call_json_once() 
 
 
 @pytest.mark.asyncio
+async def test_model_runtime_finalization_salvages_extra_final_closer() -> None:
+    chat = RecordingChatModel()
+    arguments = chat.finalization_response.tool_calls[0]["args"]
+    raw = json.dumps(arguments, ensure_ascii=False) + "}"
+    chat.finalization_response = AIMessage(
+        content="",
+        invalid_tool_calls=[
+            {
+                "name": "finalize_analysis_plan",
+                "args": raw,
+                "id": "call_extra_closer",
+                "error": "JSONDecodeError: Extra data: line 1 column 55 (char 54)",
+                "type": "invalid_tool_call",
+            }
+        ],
+    )
+
+    result = await _client(chat).finalize_analysis_plan(
+        _discovery_finalization_request(),
+        FakeCancellation(),
+    )
+
+    assert isinstance(result, AnalysisPlanningDraft)
+    assert result.mode == "ready"
+    assert _ainvoke_count(chat) == 1
+
+
+@pytest.mark.asyncio
+async def test_model_runtime_finalization_repair_targets_missing_closer() -> None:
+    chat = RecordingChatModel()
+    valid_response = chat.finalization_response
+    chat.finalization_responses = [
+        AIMessage(
+            content="",
+            invalid_tool_calls=[
+                {
+                    "name": "finalize_analysis_plan",
+                    "args": '{"plan":{"mode":"ready","requirements":[]}',
+                    "id": "call_missing_closer",
+                    "error": "JSONDecodeError: Expecting ',' delimiter",
+                    "type": "invalid_tool_call",
+                }
+            ],
+        ),
+        valid_response,
+    ]
+
+    result = await _client(chat).finalize_analysis_plan(
+        _discovery_finalization_request(),
+        FakeCancellation(),
+    )
+
+    assert isinstance(result, AnalysisPlanningDraft)
+    assert _ainvoke_count(chat) == 2
+    repair_prompt = _finalization_repair_prompt(chat)
+    assert "最小 ready 计划" in repair_prompt
+    assert "JSON 结构修复要求" in repair_prompt
+    assert "缺少末尾闭合括号" in repair_prompt
+
+
+@pytest.mark.asyncio
 async def test_model_runtime_finalization_rejects_invalid_tool_call_json_after_one_repair() -> None:
     chat = RecordingChatModel()
     chat.finalization_responses = [
@@ -2315,7 +2588,8 @@ async def test_model_runtime_finalization_rejects_invalid_tool_call_json_after_o
     assert issue.path == "response.invalid_tool_calls"
     assert issue.error_type == "json_invalid"
     assert issue.repair_reason == "shape_invalid"
-    assert issue.actual.startswith("valid=0 invalid=1 json_decode_error line=1 column=")
+    assert issue.actual.startswith("valid=0 invalid=1 json_decode_error kind=")
+    assert "line=1 column=" in issue.actual
     assert "char=" in issue.actual
     assert "count_invalid" not in issue.error_type
     dumped = result.model_dump_json()

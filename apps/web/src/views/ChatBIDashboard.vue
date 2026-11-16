@@ -3,25 +3,48 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import * as echarts from "echarts";
 import type { ECharts, EChartsOption } from "echarts";
 import {
-  Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3, BrainCircuit,
-  Check, ChevronDown, CircleHelp, Clock3, Database, Download, FileText, Layers,
-  LayoutDashboard, Lightbulb, LogOut, MessageSquareText, MoreHorizontal, Plus, RefreshCw,
-  Send, Settings2, ShieldCheck, Sparkles, TrendingUp, Upload, Wallet,
+  Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3, Bell, BrainCircuit,
+  Check, ChevronDown, CircleHelp, Clock3, Database, Download, FileSpreadsheet, FileText, Layers,
+  LayoutDashboard, Lightbulb, LogOut, MessageSquareText, Moon, MoreHorizontal, Plus, RefreshCw,
+  Send, Settings2, ShieldCheck, Sparkles, Stethoscope, Sun, TrendingUp, Upload, Wallet,
 } from "@lucide/vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
+import AskAnswerChart from "@/components/AskAnswerChart.vue";
 import { getArtifactContent } from "@/api/artifacts";
 import { buildApiUrl } from "@/api/client";
+import { getDiagnosisCapabilities, parseDiagnosisQuestion, runDiagnosis } from "@/api/diagnosis";
+import type {
+  DiagnosisCapabilities,
+  DiagnosisHypothesis,
+  DiagnosisIntent,
+  DiagnosisResult,
+} from "@/api/diagnosis";
 import { getDatasetOverview } from "@/api/datasources";
 import { listRunArtifacts } from "@/api/runs";
+import { isSafeChartMime } from "@/lib/artifactContent";
 import type { DatasetOverview, Run, Scalar, TableData } from "@/api/types";
+import { downloadCsv, downloadText, rowsToCsv, safeFilename, todayStamp } from "@/lib/dataExport";
+import { buildReportChart, chartScore } from "@/lib/reportChart";
+import type { ReportChartPayload } from "@/lib/reportChart";
+import { useTheme } from "@/lib/theme";
 import { useDatasourceStore } from "@/stores/datasourceStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useModelStore } from "@/stores/modelStore";
 import { useRunStore } from "@/stores/runStore";
 import { useSessionStore } from "@/stores/sessionStore";
 
-type Section = "dashboard" | "query" | "reports" | "ledger" | "finance";
+type Section = "dashboard" | "query" | "reports" | "diagnosis" | "ledger" | "finance";
 type ToastKind = "success" | "info" | "warning";
+
+interface AppNotification {
+  id: string;
+  title: string;
+  detail: string;
+  kind: ToastKind;
+  section: Section | null;
+  createdAt: number;
+  read: boolean;
+}
 type InsightKind = "positive" | "warning" | "neutral";
 
 interface InsightCard {
@@ -32,13 +55,9 @@ interface InsightCard {
   time: string;
 }
 
-interface ReportChartPayload {
-  option: EChartsOption;
-  summary: string;
-  note: string;
-}
-
 const router = useRouter();
+const route = useRoute();
+const { isDark, toggleTheme } = useTheme();
 const auth = useAuthStore();
 const datasources = useDatasourceStore();
 const models = useModelStore();
@@ -52,6 +71,12 @@ const queryDock = ref<HTMLElement | null>(null);
 const pageScroll = ref<HTMLElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const toast = ref<{ message: string; kind: ToastKind } | null>(null);
+const notifications = ref<AppNotification[]>([]);
+const notificationOpen = ref(false);
+let notificationSeq = 0;
+const seededAlertKeys = new Set<string>();
+const syncedDatasourceIds = new Set<string>();
+const unreadCount = computed(() => notifications.value.filter((item) => !item.read).length);
 const latestQuestion = ref("这份数据整体表现如何？");
 const aiConclusion = ref("正在读取真实数据源聚合结果…");
 const analysisSource = ref("正在连接真实数据源");
@@ -66,12 +91,14 @@ const channelHost = ref<HTMLElement | null>(null);
 const regionHost = ref<HTMLElement | null>(null);
 const reportChartHost = ref<HTMLElement | null>(null);
 const reportChartPayload = ref<ReportChartPayload | null>(null);
+const reportChartImage = ref<string | null>(null);
 const reportChartLoading = ref(false);
 const reportChartNote = ref("完成一次真实分析后，会从查询结果自动生成图表");
 const followupQuestion = ref("");
 const followupPending = ref(false);
 const followupError = ref<string | null>(null);
 const followupInput = ref<HTMLTextAreaElement | null>(null);
+const followupThread = ref<HTMLElement | null>(null);
 const profileOpen = ref(false);
 const submittedFrom = ref<"dashboard" | "followup">("dashboard");
 const pendingFollowupQuestion = ref("");
@@ -86,15 +113,35 @@ let reportAutoOpened = false;
 let toastTimer: number | null = null;
 let overviewRequest = 0;
 let loadedDatasourceId: string | null = null;
+const diagnosisCapabilities = ref<DiagnosisCapabilities | null>(null);
+const diagnosisCapabilitiesLoading = ref(false);
+const diagnosisRunning = ref(false);
+const diagnosisError = ref<string | null>(null);
+const diagnosisResult = ref<DiagnosisResult | null>(null);
+const diagnosisMetric = ref("");
+const diagnosisDimension = ref("");
+const diagnosisTime = ref("");
+const diagnosisTopN = ref(6);
+const diagnosisTechnicalOpen = ref(false);
+const diagnosisQuestion = ref("");
+const diagnosisIntent = ref<DiagnosisIntent | null>(null);
+const diagnosisAsking = ref(false);
+const diagnosisHost = ref<HTMLElement | null>(null);
+let diagnosisChart: ECharts | null = null;
+let diagnosisResizeObserver: ResizeObserver | null = null;
 
 const navItems = [
   { id: "dashboard" as const, label: "经营驾驶舱", icon: LayoutDashboard },
+  { id: "ask" as const, label: "智能工作台", icon: Sparkles },
   { id: "query" as const, label: "智能问数", icon: MessageSquareText },
   { id: "reports" as const, label: "洞察报告", icon: FileText },
+  { id: "diagnosis" as const, label: "经营诊断", icon: Stethoscope },
   { id: "ledger" as const, label: "数据资产台账", icon: Layers },
   { id: "finance" as const, label: "收支管理", icon: Wallet },
 ];
-const chartPalette = ["#43d7f5", "#6889ff", "#9b7aff", "#39cda7", "#f2b566", "#e57e9c", "#7dd3fc", "#c4b5fd"];
+const darkChartPalette = ["#43d7f5", "#6889ff", "#9b7aff", "#39cda7", "#f2b566", "#e57e9c", "#7dd3fc", "#c4b5fd"];
+const lightChartPalette = ["#5b6bef", "#7d5bee", "#4c9bff", "#2f9e7a", "#b56f12", "#c45b7a", "#5f8fd8", "#9b7aff"];
+const chartPalette = computed(() => (isDark.value ? darkChartPalette : lightChartPalette));
 const statusLabels: Record<string, string> = {
   uploaded: "已上传",
   inspecting: "检查中",
@@ -180,6 +227,7 @@ const activeTitle = computed(() => ({
   dashboard: "经营驾驶舱",
   query: "智能问数",
   reports: "洞察报告",
+  diagnosis: "经营诊断",
   ledger: "数据资产台账",
   finance: "收支管理",
 }[activeSection.value]));
@@ -229,6 +277,88 @@ const ledgerNote = computed(() => {
   const confirmed = readyDatasources.value.length;
   return "当前共 " + ledgerRows.value.length + " 个数据资产，其中 " + confirmed + " 个已完成 Schema 检查与遮蔽字段确认，可直接用于智能问数与证据链分析。";
 });
+const diagnosisReady = computed(() => diagnosisCapabilities.value?.ready === true);
+const diagnosisNarrativeBlocks = computed(() => {
+  const blocks: Array<{ type: "heading" | "item" | "text"; text: string }> = [];
+  const narrative = diagnosisResult.value?.narrative ?? "";
+  for (const line of narrative.split("\n")) {
+    const text = line.trim();
+    if (!text) continue;
+    if (text.startsWith("## ")) blocks.push({ type: "heading", text: text.slice(3) });
+    else if (text.startsWith("- ")) blocks.push({ type: "item", text: text.slice(2) });
+    else blocks.push({ type: "text", text });
+  }
+  return blocks;
+});
+const diagnosisDrivers = computed(() => {
+  const contributions = diagnosisResult.value?.contributions ?? [];
+  const drag = [...contributions]
+    .filter((item) => item.delta < 0)
+    .sort((left, right) => left.delta - right.delta)[0] ?? null;
+  const lift = [...contributions]
+    .filter((item) => item.delta > 0)
+    .sort((left, right) => right.delta - left.delta)[0] ?? null;
+  return { drag, lift };
+});
+const diagnosisHeadline = computed(() => {
+  const result = diagnosisResult.value;
+  if (result === null) return "";
+  const period = result.period;
+  const metric = result.metric_label;
+  if (period.delta === 0) {
+    return `${period.current_label}${metric}为 ${formatMetric(period.current_total)}，与${period.baseline_label}持平。`;
+  }
+  const direction = period.delta > 0 ? "多" : "少";
+  const percent = period.delta_pct === null
+    ? ""
+    : `（${period.delta_pct > 0 ? "+" : ""}${period.delta_pct.toFixed(2)}%）`;
+  let sentence = `${period.current_label}${metric} ${formatMetric(period.current_total)}，` +
+    `比${period.baseline_label}${direction} ${formatMetric(Math.abs(period.delta))}${percent}。`;
+  const { drag, lift } = diagnosisDrivers.value;
+  if (period.delta < 0) {
+    if (drag) sentence += `${drag.group}减少 ${formatMetric(Math.abs(drag.delta))}，是主要拖累；`;
+    if (lift) sentence += `${lift.group}增加 ${formatMetric(lift.delta)}，抵消了部分降幅。`;
+  } else {
+    if (lift) sentence += `${lift.group}增加 ${formatMetric(lift.delta)}，是主要拉动；`;
+    if (drag) sentence += `${drag.group}减少 ${formatMetric(Math.abs(drag.delta))}，抵消了部分增幅。`;
+  }
+  return sentence;
+});
+const diagnosisVerificationText = computed(() => {
+  const verification = diagnosisResult.value?.verification;
+  if (!verification) return "";
+  if (verification.status === "valid") return "关键核对全部通过";
+  if (verification.status === "invalid") return "有核对项未通过";
+  return "数据不足以核对";
+});
+const diagnosisCheckLabels: Record<string, string> = {
+  sum_contributions_equals_delta: "分项变化加总 = 整体变化",
+  shares_sum_to_one: "各项占比合计为 100%",
+  both_periods_have_rows: "本期和上期都有数据",
+  dimension_missing_within_limit: "分组字段缺失不超过 5%",
+};
+const diagnosisMethodLabels: Record<string, string> = {
+  additive_decomposition: "分项贡献相加",
+  temporal_stability: "多期方向一致性",
+};
+const diagnosisSuggestions = computed(() => {
+  const capabilities = diagnosisCapabilities.value;
+  if (capabilities === null || !capabilities.ready) return [];
+  const metric = capabilities.measures.find((item) => item.name === capabilities.default_measure)?.label
+    ?? capabilities.measures[0]?.label
+    ?? "营收";
+  const dimension = capabilities.dimensions.find((item) => item.name === capabilities.default_dimension)?.label
+    ?? capabilities.dimensions[0]?.label
+    ?? "区域";
+  return [
+    `本月${metric}为什么下降？按${dimension}看看`,
+    `哪个${dimension}对${metric}影响最大？`,
+    `上个月${metric}变化了多少？`,
+  ];
+});
+const diagnosisAskPlaceholder = computed(
+  () => diagnosisSuggestions.value[0] ?? "例如：本月营收为什么下降？按区域看看",
+);
 const reportRun = computed<Run | null>(() => {
   const live = runs.currentRun;
   if (live?.status === "succeeded" && live.session_id === sessions.currentSession?.id) return live;
@@ -237,13 +367,124 @@ const reportRun = computed<Run | null>(() => {
 const followupMessages = computed(() =>
   sessions.messages.filter((message) => message.content_text.trim()).slice(-6),
 );
+const followupChartMessageId = computed(() => {
+  const latest = [...followupMessages.value].reverse().find((message) => message.role === "assistant" && message.run_id);
+  return latest?.id ?? null;
+});
 const followupContext = computed(() => sessions.currentSession?.title ?? "尚无分析会话");
 const followupReady = computed(() => liveAgentReady.value && sessions.currentSession !== null);
 
-function notify(message: string, kind: ToastKind = "success") {
+interface NotifyOptions {
+  title?: string;
+  section?: Section;
+  /** 默认只记录 success / warning；重要 info 可显式要求入列表。 */
+  record?: boolean;
+}
+
+const DEFAULT_NOTIFICATION_TITLES: Record<ToastKind, string> = {
+  success: "操作完成",
+  warning: "需要注意",
+  info: "消息提示",
+};
+
+function pushNotification(
+  title: string,
+  detail: string,
+  kind: ToastKind,
+  section: Section | null = null,
+) {
+  const duplicate = notifications.value.find(
+    (item) => item.title === title && item.detail === detail && !item.read,
+  );
+  if (duplicate) return;
+  notificationSeq += 1;
+  notifications.value = [
+    {
+      id: "notif_" + Date.now() + "_" + notificationSeq,
+      title,
+      detail,
+      kind,
+      section,
+      createdAt: Date.now(),
+      read: false,
+    },
+    ...notifications.value,
+  ].slice(0, 30);
+}
+
+function notify(message: string, kind: ToastKind = "success", options: NotifyOptions = {}) {
   toast.value = { message, kind };
   if (toastTimer !== null) window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => { toast.value = null; }, 2800);
+  const record = options.record ?? kind !== "info";
+  if (record) {
+    pushNotification(
+      options.title ?? DEFAULT_NOTIFICATION_TITLES[kind],
+      message,
+      kind,
+      options.section ?? null,
+    );
+  }
+}
+
+function formatNotificationTime(timestamp: number) {
+  const elapsed = Date.now() - timestamp;
+  if (elapsed < 60_000) return "刚刚";
+  if (elapsed < 3_600_000) return Math.floor(elapsed / 60_000) + " 分钟前";
+  if (elapsed < 86_400_000) return Math.floor(elapsed / 3_600_000) + " 小时前";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(timestamp));
+}
+
+function toggleNotificationList() {
+  notificationOpen.value = !notificationOpen.value;
+  profileOpen.value = false;
+}
+
+// 顶栏的 backdrop-filter 会让 fixed 遮罩以顶栏为包含块，因此再挂一个文档级监听，
+// 保证点击页面任意位置都能收起消息列表。
+function handleDocumentPointerDown(event: PointerEvent) {
+  if (!notificationOpen.value) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest(".notification-wrap")) return;
+  notificationOpen.value = false;
+}
+
+function handleDocumentKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" && notificationOpen.value) {
+    notificationOpen.value = false;
+  }
+}
+
+function markAllNotificationsRead() {
+  notifications.value = notifications.value.map((item) => ({ ...item, read: true }));
+}
+
+function clearReadNotifications() {
+  notifications.value = notifications.value.filter((item) => !item.read);
+}
+
+function openNotification(item: AppNotification) {
+  notifications.value = notifications.value.map((entry) =>
+    entry.id === item.id ? { ...entry, read: true } : entry,
+  );
+  notificationOpen.value = false;
+  if (item.section !== null) selectSection(item.section);
+}
+function handleNavSelect(id: Section | "ask") {
+  if (id === "ask") {
+    void router.push({
+      path: "/ask",
+      query: datasourceReady.value ? { workspace: datasourceReady.value.id } : {},
+    });
+    return;
+  }
+  selectSection(id);
 }
 function selectSection(section: Section) {
   activeSection.value = section;
@@ -373,6 +614,21 @@ async function loadOverview(force = false) {
     if (requestId !== overviewRequest) return;
     overview.value = data;
     lastUpdated.value = new Date();
+    if (!syncedDatasourceIds.has(source.id)) {
+      syncedDatasourceIds.add(source.id);
+      pushNotification(
+        "数据源已同步",
+        data.datasource_name + " · " + formatCount(data.row_count) + " 条记录 · Schema v" + data.schema_revision,
+        "info",
+        "dashboard",
+      );
+    }
+    for (const alert of data.alerts) {
+      const key = source.id + "::" + alert.title;
+      if (seededAlertKeys.has(key)) continue;
+      seededAlertKeys.add(key);
+      pushNotification(alert.title, alert.detail, alert.level, "dashboard");
+    }
     if (runs.currentRun?.status !== "succeeded") {
       runInsights.value = null;
       latestQuestion.value = "这份数据整体表现如何？";
@@ -397,10 +653,31 @@ async function loadOverview(force = false) {
 async function refreshDashboard() {
   lastUpdated.value = new Date();
   await loadOverview(true);
-  notify(overview.value ? "真实数据聚合并已刷新" : "真实数据刷新失败", overview.value ? "success" : "warning");
+  notify(overview.value ? "真实数据聚合并已刷新" : "真实数据刷新失败", overview.value ? "success" : "warning", {
+    record: overview.value === null,
+  });
 }
 function renderCharts() {
   const data = overview.value;
+  const light = !isDark.value;
+  const ink = light ? "#172454" : "#e6f4ff";
+  const muted = light ? "#5f6d92" : "#7486a1";
+  const subtle = light ? "#8794b5" : "#6f829d";
+  const tooltipBg = light ? "rgba(255,255,255,.98)" : "rgba(8,19,39,.96)";
+  const tooltipBorder = light ? "#dfe7f7" : "rgba(77,190,255,.25)";
+  const splitLine = light ? "rgba(23,36,84,.08)" : "rgba(104,153,199,.1)";
+  const axisLine = light ? "#dfe7f7" : "rgba(120,165,206,.18)";
+  const linePrimary = light ? "#5b6bef" : "#53d6ff";
+  const lineSecondary = light ? "#7d5bee" : "#a08cff";
+  const pointBorder = light ? "#ffffff" : "#071a30";
+  const barTop = light ? "#5b6bef" : "#43d7f5";
+  const barBottom = light ? "rgba(91,107,239,.18)" : "rgba(45,186,255,.18)";
+  const barHover = light ? "#7d5bee" : "#8ceaff";
+  const pieBorder = light ? "#ffffff" : "#0a1730";
+  const rankBg = light ? "rgba(91,107,239,.08)" : "rgba(81,129,184,.09)";
+  const rankStart = light ? "#5b6bef" : "#38bdf8";
+  const rankEnd = light ? "#7d5bee" : "#8b7bff";
+  const rankLabel = light ? "#5f6d92" : "#92a9c5";
   if (trendHost.value && data?.trend) {
     const hasRate = data.trend.series.some((item) => item.axis === "rate");
     const rates = data.trend.series.filter((item) => item.axis === "rate").flatMap((item) => item.values);
@@ -413,8 +690,8 @@ function renderCharts() {
           yAxisIndex: 0,
           data: item.values,
           barWidth: 16,
-          itemStyle: { borderRadius: [4, 4, 0, 0], color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: "#43d7f5" }, { offset: 1, color: "rgba(45,186,255,.18)" }]) },
-          emphasis: { itemStyle: { color: "#8ceaff" } },
+          itemStyle: { borderRadius: [4, 4, 0, 0], color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: barTop }, { offset: 1, color: barBottom }]) },
+          emphasis: { itemStyle: { color: barHover } },
         };
       }
       return {
@@ -425,30 +702,30 @@ function renderCharts() {
         smooth: true,
         symbol: "circle",
         symbolSize: 5,
-        lineStyle: { width: 2.5, color: index === 0 ? "#53d6ff" : "#a08cff" },
-        itemStyle: { color: index === 0 ? "#6ce6ff" : "#b6a4ff", borderColor: "#071a30", borderWidth: 2 },
+        lineStyle: { width: 2.5, color: index === 0 ? linePrimary : lineSecondary },
+        itemStyle: { color: index === 0 ? linePrimary : lineSecondary, borderColor: pointBorder, borderWidth: 2 },
       };
     });
     const yAxis = [
-      { type: "value" as const, name: "条", min: 0, splitNumber: 4, axisLabel: { color: "#6f829d", fontSize: 9 }, splitLine: { lineStyle: { color: "rgba(104,153,199,.1)", type: "dashed" as const } }, axisLine: { show: false } },
-      ...(hasRate ? [{ type: "value" as const, name: "%", min: 0, max: rateMax, splitNumber: 4, axisLabel: { color: "#8b7fd8", fontSize: 9, formatter: "{value}%" }, splitLine: { show: false }, axisLine: { show: false } }] : []),
+      { type: "value" as const, name: "条", min: 0, splitNumber: 4, axisLabel: { color: subtle, fontSize: 11 }, splitLine: { lineStyle: { color: splitLine, type: "dashed" as const } }, axisLine: { show: false } },
+      ...(hasRate ? [{ type: "value" as const, name: "%", min: 0, max: rateMax, splitNumber: 4, axisLabel: { color: light ? "#6d4fd8" : "#8b7fd8", fontSize: 11, formatter: "{value}%" }, splitLine: { show: false }, axisLine: { show: false } }] : []),
     ];
     trendChart?.setOption({
       animationDuration: 900,
-      grid: { left: 5, right: hasRate ? 30 : 12, top: 14, bottom: 26, containLabel: true },
+      grid: { left: 5, right: hasRate ? 36 : 14, top: 16, bottom: 30, containLabel: true },
       legend: { show: false },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "rgba(8,19,39,.96)",
-        borderColor: "rgba(77,190,255,.25)",
-        textStyle: { color: "#e6f4ff", fontSize: 11 },
+        backgroundColor: tooltipBg,
+        borderColor: tooltipBorder,
+        textStyle: { color: ink, fontSize: 12 },
         formatter: (raw: unknown) => {
           const items = raw as Array<{ marker: string; seriesName: string; value: number; seriesIndex: number }>;
           const series = data.trend?.series ?? [];
           return items.map((item) => item.marker + item.seriesName + "：" + Number(item.value).toLocaleString("zh-CN") + (series[item.seriesIndex]?.axis === "rate" ? "%" : " 条")).join("<br/>");
         },
       },
-      xAxis: { type: "category", data: data.trend.labels, axisLine: { lineStyle: { color: "rgba(120,165,206,.18)" } }, axisTick: { show: false }, axisLabel: { color: "#7486a1", fontSize: 10, margin: 12 } },
+      xAxis: { type: "category", data: data.trend.labels, axisLine: { lineStyle: { color: axisLine } }, axisTick: { show: false }, axisLabel: { color: muted, fontSize: 12, margin: 10 } },
       yAxis,
       series: chartSeries,
     } as EChartsOption, { notMerge: true });
@@ -456,12 +733,12 @@ function renderCharts() {
   if (channelHost.value && data?.distribution) {
     channelChart?.setOption({
       animationDuration: 900,
-      tooltip: { trigger: "item", backgroundColor: "rgba(8,19,39,.96)", borderColor: "rgba(77,190,255,.25)", textStyle: { color: "#e6f4ff", fontSize: 11 }, formatter: "{b} · {d}%" },
-      color: chartPalette,
-      series: [{ type: "pie", radius: ["63%", "84%"], center: ["50%", "50%"], label: { show: false }, labelLine: { show: false }, itemStyle: { borderColor: "#0a1730", borderWidth: 3, borderRadius: 5 }, emphasis: { scale: true, scaleSize: 7 }, data: data.distribution.items.map((item) => ({ value: item.count, name: item.name })) }],
+      tooltip: { trigger: "item", backgroundColor: tooltipBg, borderColor: tooltipBorder, textStyle: { color: ink, fontSize: 11 }, formatter: "{b} · {d}%" },
+      color: chartPalette.value,
+      series: [{ type: "pie", radius: ["63%", "84%"], center: ["50%", "50%"], label: { show: false }, labelLine: { show: false }, itemStyle: { borderColor: pieBorder, borderWidth: 3, borderRadius: 5 }, emphasis: { scale: true, scaleSize: 7 }, data: data.distribution.items.map((item) => ({ value: item.count, name: item.name })) }],
       graphic: [
-        { type: "text", left: "center", top: "40%", style: { text: formatCount(data.row_count) + " 条", fill: "#e6f6ff", fontSize: 15, fontWeight: 700, fontFamily: "Inter,sans-serif" } },
-        { type: "text", left: "center", top: "56%", style: { text: data.distribution.label, fill: "#7f94b2", fontSize: 9, fontFamily: "Inter,sans-serif" } },
+        { type: "text", left: "center", top: "39%", style: { text: formatCount(data.row_count) + " 条", fill: ink, fontSize: 17, fontWeight: 700, fontFamily: "Inter,sans-serif" } },
+        { type: "text", left: "center", top: "58%", style: { text: data.distribution.label, fill: muted, fontSize: 10.5, fontFamily: "Inter,sans-serif" } },
       ],
     } as EChartsOption, { notMerge: true });
   }
@@ -473,10 +750,10 @@ function renderCharts() {
     regionChart?.setOption({
       animationDuration: 800,
       grid: { left: 2, right: 26, top: 7, bottom: 4, containLabel: true },
-      tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: "rgba(8,19,39,.96)", borderColor: "rgba(77,190,255,.25)", textStyle: { color: "#e6f4ff", fontSize: 11 }, valueFormatter: (value) => Number(value).toFixed(1) + "%" },
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: tooltipBg, borderColor: tooltipBorder, textStyle: { color: ink, fontSize: 11 }, valueFormatter: (value) => Number(value).toFixed(1) + "%" },
       xAxis: { type: "value", max: maxValue, show: false },
-      yAxis: { type: "category", inverse: true, data: data.ranking.items.map((item) => item.name), axisTick: { show: false }, axisLine: { show: false }, axisLabel: { color: "#9cb0c9", fontSize: 10, margin: 10 } },
-      series: [{ type: "bar", data: values, barWidth: 9, showBackground: true, backgroundStyle: { color: "rgba(81,129,184,.09)", borderRadius: 99 }, itemStyle: { borderRadius: 99, color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: "#38bdf8" }, { offset: 1, color: "#8b7bff" }]) }, label: { show: true, position: "right", color: "#92a9c5", fontSize: 9, formatter: "{c}%" } }],
+      yAxis: { type: "category", inverse: true, data: data.ranking.items.map((item) => item.name), axisTick: { show: false }, axisLine: { show: false }, axisLabel: { color: rankLabel, fontSize: 11.5, margin: 12 } },
+      series: [{ type: "bar", data: values, barWidth: 11, showBackground: true, backgroundStyle: { color: rankBg, borderRadius: 99 }, itemStyle: { borderRadius: 99, color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: rankStart }, { offset: 1, color: rankEnd }]) }, label: { show: true, position: "right", color: rankLabel, fontSize: 10.5, formatter: "{c}%" } }],
     } as EChartsOption, { notMerge: true });
   }
 }
@@ -493,179 +770,11 @@ function initCharts() {
     [trendHost.value, channelHost.value, regionHost.value].forEach((host) => { if (host) resizeObserver?.observe(host); });
   }
 }
-const monthDisplayLabels: Record<string, string> = {
-  jan: "1月", feb: "2月", mar: "3月", apr: "4月", may: "5月", jun: "6月",
-  jul: "7月", aug: "8月", sep: "9月", oct: "10月", nov: "11月", dec: "12月",
-};
-const reportColumnLabels: Record<string, string> = {
-  month: "月份",
-  month_num: "月份序号",
-  sessions: "会话数",
-  conversion_rate: "转化率",
-  conv_rate: "转化率",
-  page_value_bucket: "页面价值分桶",
-  avg_page_value: "平均页面价值",
-  corr: "相关系数",
-  diff_pp: "差值（百分点）",
-  rel_change: "相对变化",
-  better_month: "更高月份",
-  traffic_type: "流量类型",
-  visitor_type: "访客类型",
-  region: "区域",
-  browser: "浏览器",
-  operating_systems: "操作系统",
-  administrative: "行政页面数",
-  product_related: "产品页浏览数",
-  bounce_rates: "跳出率",
-  exit_rates: "退出率",
-  special_day: "特殊日期",
-};
-const shortCodeLabels: Record<string, string> = {
-  traffic_type: "类型",
-  region: "区域",
-  browser: "浏览器",
-  operating_systems: "系统",
-};
-function reportColumnLabel(name: string) {
-  return reportColumnLabels[name] ?? name;
-}
-function reportValueLabel(column: string, value: Scalar, index: number) {
-  if (value === null || value === undefined || value === "") return String(index + 1);
-  if (column === "month") {
-    const key = String(value).slice(0, 3).toLowerCase();
-    return monthDisplayLabels[key] ?? String(value);
-  }
-  const short = shortCodeLabels[column];
-  if (short !== undefined && typeof value === "number") return short + " " + value;
-  return String(value);
-}
-function numericColumnIndexes(table: TableData) {
-  return table.columns.map((_, index) => index).filter((index) =>
-    table.rows.some((row) => typeof row[index] === "number") &&
-    table.rows.every((row) => row[index] === null || typeof row[index] === "number"),
-  );
-}
-function isRateColumn(table: TableData, index: number) {
-  if (!/rate|ratio|pct|percent|share|conversion|率|占比/i.test(table.columns[index])) return false;
-  const values = table.rows.map((row) => Number(row[index])).filter(Number.isFinite);
-  return values.length > 0 && Math.max(...values.map((value) => Math.abs(value))) <= 1.5;
-}
-function chartScore(table: TableData) {
-  if (table.rows.length < 2) return -1;
-  const numeric = numericColumnIndexes(table);
-  if (numeric.length === 0) return -1;
-  const categorical = table.columns.length - numeric.length;
-  return Math.min(table.rows.length, 24) * 2 + numeric.length * 3 + (categorical > 0 ? 6 : 0);
-}
-function buildReportChart(table: TableData): ReportChartPayload | null {
-  if (table.rows.length < 2) return null;
-  const numeric = numericColumnIndexes(table);
-  const categorical = table.columns.map((_, index) => index).filter((index) => !numeric.includes(index));
-  const xIndex = categorical.length > 0 ? categorical[0] : numeric.length >= 2 ? numeric[0] : -1;
-  if (xIndex < 0) return null;
-  const seriesIndexes = numeric.filter((index) => index !== xIndex);
-  if (seriesIndexes.length === 0) return null;
-  const rateIndex = seriesIndexes.find((index) => isRateColumn(table, index));
-  const valueIndex = seriesIndexes.find((index) => !isRateColumn(table, index));
-  if (rateIndex === undefined && valueIndex === undefined) return null;
-
-  const rows = table.rows.slice(0, 24);
-  const labels = rows.map((row, index) => reportValueLabel(table.columns[xIndex], row[xIndex], index));
-  const valueValues = valueIndex === undefined ? null : rows.map((row) => Number(row[valueIndex]));
-  const rateValues = rateIndex === undefined ? null : rows.map((row) => Number(row[rateIndex]) * 100);
-  const rateNames = new Set<string>();
-  if (rateValues !== null && rateIndex !== undefined) {
-    rateNames.add(reportColumnLabel(table.columns[rateIndex]));
-  }
-  const series: Array<Record<string, unknown>> = [];
-  if (valueValues !== null && valueIndex !== undefined) {
-    series.push({
-      name: reportColumnLabel(table.columns[valueIndex]),
-      type: "bar",
-      yAxisIndex: 0,
-      data: valueValues,
-      barWidth: 18,
-      itemStyle: {
-        borderRadius: [4, 4, 0, 0],
-        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-          { offset: 0, color: "#43d7f5" },
-          { offset: 1, color: "rgba(45,186,255,.16)" },
-        ]),
-      },
-    });
-  }
-  if (rateValues !== null && rateIndex !== undefined) {
-    series.push({
-      name: reportColumnLabel(table.columns[rateIndex]),
-      type: "line",
-      yAxisIndex: valueValues === null ? 0 : 1,
-      data: rateValues,
-      smooth: true,
-      symbol: "circle",
-      symbolSize: 5,
-      lineStyle: { width: 2.2, color: "#a08cff" },
-      itemStyle: { color: "#b6a4ff" },
-    });
-  }
-  const hasRate = rateValues !== null;
-  const hasValue = valueValues !== null;
-  const rateMax = Math.max(5, Math.ceil(Math.max(0, ...(rateValues ?? [0])) / 5) * 5);
-  const yAxis = hasRate && hasValue
-    ? [
-        { type: "value" as const, min: 0, splitNumber: 3, axisLabel: { color: "#6f829d", fontSize: 8 }, splitLine: { lineStyle: { color: "rgba(104,153,199,.1)", type: "dashed" as const } }, axisLine: { show: false } },
-        { type: "value" as const, min: 0, max: rateMax, splitNumber: 3, axisLabel: { color: "#8b7fd8", fontSize: 8, formatter: "{value}%" }, splitLine: { show: false }, axisLine: { show: false } },
-      ]
-    : [
-        hasRate
-          ? { type: "value" as const, min: 0, max: rateMax, splitNumber: 3, axisLabel: { color: "#8b7fd8", fontSize: 8, formatter: "{value}%" }, splitLine: { lineStyle: { color: "rgba(104,153,199,.1)", type: "dashed" as const } }, axisLine: { show: false } }
-          : { type: "value" as const, min: 0, splitNumber: 3, axisLabel: { color: "#6f829d", fontSize: 8 }, splitLine: { lineStyle: { color: "rgba(104,153,199,.1)", type: "dashed" as const } }, axisLine: { show: false } },
-      ];
-  const seriesNames = series.map((item) => String(item.name));
-  const labelInterval = labels.length > 8 ? Math.ceil(labels.length / 8) - 1 : 0;
-  const summary = reportColumnLabel(table.columns[xIndex]) + " · " + seriesNames.join(" × ");
-  const note = "来自本次查询结果 · " + table.row_count + " 行 · " +
-    table.columns.map(reportColumnLabel).join(" / ");
-  const option: EChartsOption = {
-    animationDuration: 800,
-    grid: { left: 2, right: hasRate && hasValue ? 30 : 8, top: series.length > 1 ? 22 : 10, bottom: 4, containLabel: true },
-    legend: series.length > 1
-      ? { top: 0, right: 0, itemWidth: 7, itemHeight: 7, textStyle: { color: "#8091ad", fontSize: 8 }, data: seriesNames }
-      : { show: false },
-    tooltip: {
-      trigger: "axis",
-      backgroundColor: "rgba(8,19,39,.96)",
-      borderColor: "rgba(77,190,255,.25)",
-      textStyle: { color: "#e6f4ff", fontSize: 10 },
-      formatter: (raw: unknown) => {
-        const items = raw as Array<{ axisValueLabel?: string; marker: string; seriesName: string; value: number }>;
-        const head = items[0]?.axisValueLabel ?? "";
-        const lines = items.map((item) => item.marker + item.seriesName + "：" +
-          Number(item.value).toLocaleString("zh-CN", { maximumFractionDigits: 1 }) +
-          (rateNames.has(item.seriesName) ? "%" : ""));
-        return [head, ...lines].join("<br/>");
-      },
-    },
-    xAxis: {
-      type: "category",
-      name: reportColumnLabel(table.columns[xIndex]),
-      nameTextStyle: { color: "#7d90a8", fontSize: 8 },
-      data: labels,
-      axisLine: { lineStyle: { color: "rgba(120,165,206,.18)" } },
-      axisTick: { show: false },
-      axisLabel: {
-        color: "#7486a1",
-        fontSize: 8,
-        margin: 7,
-        rotate: labels.length > 8 ? 30 : 0,
-        interval: labelInterval,
-        formatter: (value: string) => value.length > 14 ? value.slice(0, 13) + "…" : value,
-      },
-    },
-    yAxis,
-    series,
-  } as EChartsOption;
-  return { option, summary, note };
-}
+watch(isDark, async () => {
+  await nextTick();
+  initCharts();
+  initDiagnosisChart();
+});
 function initReportChart() {
   reportResizeObserver?.disconnect();
   reportChart?.dispose();
@@ -679,16 +788,27 @@ function initReportChart() {
     reportResizeObserver.observe(reportChartHost.value);
   }
 }
+function clearReportChartImage() {
+  if (reportChartImage.value !== null) {
+    URL.revokeObjectURL(reportChartImage.value);
+    reportChartImage.value = null;
+  }
+}
+function scrollFollowupToEnd() {
+  const element = followupThread.value;
+  if (element !== null) element.scrollTop = element.scrollHeight;
+}
 async function loadReportChart() {
   const run = reportRun.value;
   if (run === null) {
     reportChartRunId = null;
     reportChartPayload.value = null;
+    clearReportChartImage();
     reportChartNote.value = "完成一次真实分析后，会从查询结果自动生成图表";
     initReportChart();
     return;
   }
-  if (reportChartRunId === run.id && reportChartPayload.value !== null) {
+  if (reportChartRunId === run.id && (reportChartPayload.value !== null || reportChartImage.value !== null)) {
     await nextTick();
     initReportChart();
     return;
@@ -697,6 +817,21 @@ async function loadReportChart() {
   reportChartLoading.value = true;
   try {
     const artifacts = await listRunArtifacts(run.id);
+    // 追问/分析生成的图表产物优先直接展示，没有时再用表格结果兜底绘图。
+    const chartArtifact = artifacts.find((item) => item.type === "chart");
+    if (chartArtifact !== undefined) {
+      const content = await getArtifactContent(chartArtifact.id);
+      if (isSafeChartMime(content.contentType)) {
+        clearReportChartImage();
+        reportChartImage.value = URL.createObjectURL(content.blob);
+        reportChartPayload.value = null;
+        reportChartNote.value = chartArtifact.title || "来自本次分析的图表产物";
+        await nextTick();
+        initReportChart();
+        return;
+      }
+    }
+    clearReportChartImage();
     const tables: TableData[] = [];
     for (const artifact of artifacts.filter((item) => item.type === "table").slice(0, 6)) {
       const content = await getArtifactContent(artifact.id);
@@ -716,6 +851,7 @@ async function loadReportChart() {
     initReportChart();
   } catch (error) {
     reportChartPayload.value = null;
+    clearReportChartImage();
     reportChartNote.value = "图表读取失败：" + (error instanceof Error ? error.message : "未知错误");
     reportChartRunId = null;
     initReportChart();
@@ -759,7 +895,11 @@ async function submitQuestion() {
     }
     const runId = await sessions.submitRun(prompt, makeIdempotencyKey());
     await runs.begin(runId);
-    notify("分析任务已提交，正在生成证据链", "info");
+    notify("分析任务已提交，正在生成证据链", "info", {
+      title: "智能问数 · 已提交",
+      section: "query",
+      record: true,
+    });
   } catch (error) {
     isAnalyzing.value = false;
     const message = error instanceof Error ? error.message : "分析任务提交失败";
@@ -768,17 +908,517 @@ async function submitQuestion() {
     notify(message, "warning");
   }
 }
+function overviewSections(): { title: string; header: string[]; rows: Scalar[][] }[] {
+  const data = overview.value;
+  if (data === null) return [];
+  const sections: { title: string; header: string[]; rows: Scalar[][] }[] = [];
+  sections.push({
+    title: "概览",
+    header: ["数据源", "数据表", "记录数", "字段数", "整体转化率", "统计周期", "更新时间"],
+    rows: [[data.datasource_name, data.table, data.row_count, data.column_count,
+      data.conversion_pct === null ? "—" : `${data.conversion_pct}%`, data.period_label, formatDateTime(data.updated_at)]],
+  });
+  if (data.metrics.length > 0) {
+    sections.push({
+      title: "核心指标",
+      header: ["指标", "数值", "说明", "环比"],
+      rows: data.metrics.map((metric) => [metric.label, metric.value, metric.detail, metric.change ?? "—"]),
+    });
+  }
+  const trend = data.trend;
+  if (trend !== null && trend.labels.length > 0) {
+    sections.push({
+      title: `月度趋势 · ${trend.title}`,
+      header: ["维度", ...trend.series.map((item) => item.name)],
+      rows: trend.labels.map((label, index) => [label, ...trend.series.map((item) => item.values[index] ?? null)]),
+    });
+  }
+  for (const group of [data.distribution, data.ranking]) {
+    if (group === null) continue;
+    sections.push({
+      title: `${group.title} · ${group.column}`,
+      header: ["分组", "记录数", "占比", "转化率"],
+      rows: group.items.map((item) => [item.name, item.count, `${item.share_pct}%`, item.conversion_pct === null ? "—" : `${item.conversion_pct}%`]),
+    });
+  }
+  if (data.alerts.length > 0) {
+    sections.push({
+      title: "数据预警",
+      header: ["级别", "标题", "说明"],
+      rows: data.alerts.map((alert) => [alert.level === "warning" ? "关注" : "提示", alert.title, alert.detail]),
+    });
+  }
+  return sections;
+}
+
+function exportDashboardCsv() {
+  const sections = overviewSections();
+  if (sections.length === 0) {
+    notify("暂无可导出的看板数据", "info");
+    return;
+  }
+  const csv = sections
+    .map((section) => [`# ${section.title}`, rowsToCsv([section.header, ...section.rows])].join("\r\n"))
+    .join("\r\n\r\n");
+  const source = overview.value?.datasource_name ?? "经营看板";
+  downloadCsv(`${safeFilename(source)}-看板数据-${todayStamp()}.csv`, csv);
+  notify("看板数据已导出为 CSV");
+}
+
+function buildReportMarkdown(): string {
+  const data = overview.value;
+  const lines: string[] = [];
+  lines.push("# 智析 ChatBI · 经营洞察报告", "");
+  lines.push(`生成时间：${new Date().toLocaleString("zh-CN")}`);
+  if (data !== null) {
+    lines.push(`数据来源：${data.datasource_name} · ${data.table}`);
+    lines.push(`数据规模：${formatCount(data.row_count)} 条记录 · ${data.column_count} 个字段`);
+    lines.push(`统计周期：${data.period_label}`);
+    if (data.conversion_pct !== null) lines.push(`整体转化率：${data.conversion_pct}%`);
+  }
+  lines.push("", "## 分析问题", "", latestQuestion.value || "—");
+  lines.push("", "## 核心结论", "", aiConclusion.value || "—");
+  for (const section of overviewSections()) {
+    if (section.title === "概览") continue;
+    lines.push("", `## ${section.title}`, "");
+    lines.push(`| ${section.header.join(" | ")} |`);
+    lines.push(`| ${section.header.map(() => "---").join(" | ")} |`);
+    for (const row of section.rows) {
+      lines.push(`| ${row.map((cell) => cell === null || cell === undefined ? "—" : String(cell)).join(" | ")} |`);
+    }
+  }
+  lines.push("", "## 口径说明", "", `- ${analysisSource.value}`);
+  lines.push(`- 指标由真实数据源即时聚合，导出时间 ${new Date().toLocaleString("zh-CN")}`);
+  lines.push("- 请结合企业数据口径与证据材料复核本报告");
+  return lines.join("\n");
+}
+
 function downloadReport() {
-  const report = "# 智析 ChatBI · 经营洞察报告\n\n生成时间：" + new Date().toLocaleString("zh-CN") +
-    "\n\n## 分析问题\n" + latestQuestion.value + "\n\n## 核心结论\n" + aiConclusion.value +
-    "\n\n## 数据说明\n" + analysisSource.value + "\n\n> 请结合企业数据口径和证据材料复核本报告。";
-  const url = URL.createObjectURL(new Blob([report], { type: "text/markdown;charset=utf-8" }));
+  const data = overview.value;
+  const name = data === null ? "智析经营洞察" : `${safeFilename(data.datasource_name)}-经营洞察`;
+  downloadText(`${name}-${todayStamp()}.md`, buildReportMarkdown(), "text/markdown");
+  notify("洞察报告已导出为 Markdown（含指标、分组与趋势数据）");
+}
+
+function exportReportCsv() {
+  const sections = overviewSections().filter((section) => section.title !== "概览");
+  if (sections.length === 0) {
+    notify("暂无可导出的分析数据", "info");
+    return;
+  }
+  const csv = sections
+    .map((section) => [`# ${section.title}`, rowsToCsv([section.header, ...section.rows])].join("\r\n"))
+    .join("\r\n\r\n");
+  const prefix = overview.value === null ? "智析洞察报告" : `${safeFilename(overview.value.datasource_name)}-洞察报告`;
+  downloadCsv(`${prefix}-${todayStamp()}.csv`, csv);
+  notify("报告数据已导出为 CSV");
+}
+function formatMetric(value: number) {
+  const absolute = Math.abs(value);
+  if (absolute >= 10000) return value.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
+  if (absolute >= 100) return value.toLocaleString("zh-CN", { maximumFractionDigits: 1 });
+  return value.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+}
+function diagnosisStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    leading: "最可能",
+    supporting: "有可能",
+    contradicted: "存在反向信号",
+    rejected: "已排除",
+    unknown: "证据不足",
+    valid: "核对通过",
+    invalid: "核对未通过",
+    insufficient: "数据不足",
+  };
+  return labels[status] ?? status;
+}
+function diagnosisCheckLabel(name: string) {
+  return diagnosisCheckLabels[name] ?? name;
+}
+function diagnosisMethodLabel(name: string) {
+  return diagnosisMethodLabels[name] ?? name;
+}
+function formatSigned(value: number) {
+  return (value >= 0 ? "+" : "") + formatMetric(value);
+}
+function hypothesisPlainText(hypothesis: DiagnosisHypothesis) {
+  const result = diagnosisResult.value;
+  if (result === null) return hypothesis.text;
+  const evidence = result.evidence.find((item) => hypothesis.supporting.includes(item.id));
+  const group = evidence?.group;
+  if (group === undefined) return hypothesis.text;
+  const contribution = result.contributions.find((item) => item.group === group)
+    ?? (result.others?.group === group ? result.others : null);
+  if (contribution === null) return hypothesis.text;
+  const direction = contribution.delta >= 0 ? "增加" : "减少";
+  const amount = formatMetric(Math.abs(contribution.delta));
+  const { drag, lift } = diagnosisDrivers.value;
+  if (drag?.group === group) {
+    return result.period.delta < 0
+      ? `「${group}」${direction} ${amount}，是整体下降的主要拖累。`
+      : `「${group}」${direction} ${amount}，拉低了整体增幅。`;
+  }
+  if (lift?.group === group) {
+    return result.period.delta < 0
+      ? `「${group}」${direction} ${amount}，抵消了部分降幅。`
+      : `「${group}」${direction} ${amount}，是整体增长的主要拉动。`;
+  }
+  return `「${group}」${direction} ${amount}，对整体变化形成${
+    contribution.delta * result.period.delta >= 0 ? "同向" : "反向"
+  }影响。`;
+}
+function hypothesisEvidenceSummary(hypothesis: DiagnosisHypothesis) {
+  const against = hypothesis.contradicting.length;
+  return `依据 ${hypothesis.supporting.length} 条数据信号` +
+    (against > 0 ? `，另有 ${against} 条反向信号` : "");
+}
+function clearDiagnosisIntent() {
+  diagnosisIntent.value = null;
+}
+async function askDiagnosis() {
+  const source = datasourceReady.value;
+  const question = diagnosisQuestion.value.trim();
+  if (source === null) {
+    notify("请先在数据资产中连接真实数据源", "warning");
+    return;
+  }
+  if (!question || diagnosisAsking.value) return;
+  if (!diagnosisReady.value) {
+    notify(diagnosisCapabilities.value?.message ?? "当前数据源暂不可诊断", "warning");
+    return;
+  }
+  diagnosisAsking.value = true;
+  diagnosisError.value = null;
+  try {
+    const intent = await parseDiagnosisQuestion(source.id, question);
+    diagnosisIntent.value = intent;
+    if (
+      !intent.understood
+      || intent.metric === null
+      || intent.dimension === null
+      || intent.time_column === null
+    ) {
+      notify(intent.clarification ?? "没有识别出可诊断的问题，请换个说法", "warning");
+      return;
+    }
+    diagnosisMetric.value = intent.metric;
+    diagnosisDimension.value = intent.dimension;
+    diagnosisTime.value = intent.time_column;
+    await nextTick();
+    await executeDiagnosis();
+  } catch (error) {
+    diagnosisIntent.value = null;
+    diagnosisError.value = error instanceof Error ? error.message : "问题解析失败";
+    notify(diagnosisError.value, "warning");
+  } finally {
+    diagnosisAsking.value = false;
+  }
+}
+function applyDiagnosisQuestion(text: string) {
+  diagnosisQuestion.value = text;
+  void askDiagnosis();
+}
+async function loadDiagnosis(force = false) {
+  const source = datasourceReady.value;
+  diagnosisError.value = null;
+  if (source === null) {
+    diagnosisCapabilities.value = null;
+    diagnosisResult.value = null;
+    await nextTick();
+    initDiagnosisChart();
+    return;
+  }
+  if (!force && diagnosisCapabilities.value?.datasource_id === source.id) return;
+  diagnosisCapabilitiesLoading.value = true;
+  diagnosisResult.value = null;
+  try {
+    const capabilities = await getDiagnosisCapabilities(source.id);
+    diagnosisCapabilities.value = capabilities;
+    diagnosisMetric.value = capabilities.default_measure ?? capabilities.measures[0]?.name ?? "";
+    diagnosisDimension.value = capabilities.default_dimension ?? capabilities.dimensions[0]?.name ?? "";
+    diagnosisTime.value = capabilities.default_time_column ?? capabilities.time_columns[0]?.name ?? "";
+  } catch (error) {
+    diagnosisCapabilities.value = null;
+    diagnosisError.value = error instanceof Error ? error.message : "诊断能力识别失败";
+  } finally {
+    diagnosisCapabilitiesLoading.value = false;
+    await nextTick();
+    initDiagnosisChart();
+  }
+}
+async function executeDiagnosis() {
+  const source = datasourceReady.value;
+  if (source === null) {
+    notify("请先在数据资产中连接真实数据源", "warning");
+    return;
+  }
+  if (!diagnosisReady.value) {
+    notify(diagnosisCapabilities.value?.message ?? "当前数据源暂不可诊断", "warning");
+    return;
+  }
+  if (!diagnosisMetric.value || !diagnosisDimension.value || !diagnosisTime.value) {
+    notify("请选择指标、维度与时间字段", "warning");
+    return;
+  }
+  diagnosisRunning.value = true;
+  diagnosisError.value = null;
+  try {
+    const result = await runDiagnosis(source.id, {
+      metric: diagnosisMetric.value,
+      dimension: diagnosisDimension.value,
+      time_column: diagnosisTime.value,
+      top_n: diagnosisTopN.value,
+    });
+    if (datasourceReady.value?.id !== source.id) return;
+    diagnosisResult.value = result;
+    await nextTick();
+    initDiagnosisChart();
+    notify("经营诊断完成 · 不变量验证 " + result.verification.passed + "/" + result.verification.total + " 通过", "success", {
+      title: "经营诊断 · 已完成",
+      section: "diagnosis",
+    });
+  } catch (error) {
+    diagnosisResult.value = null;
+    diagnosisError.value = error instanceof Error ? error.message : "经营诊断执行失败";
+    notify(diagnosisError.value, "warning");
+    await nextTick();
+    initDiagnosisChart();
+  } finally {
+    diagnosisRunning.value = false;
+  }
+}
+function renderDiagnosisChart() {
+  const result = diagnosisResult.value;
+  if (diagnosisHost.value === null) return;
+  if (result === null) {
+    diagnosisChart?.clear();
+    return;
+  }
+  const light = !isDark.value;
+  const ink = light ? "#172454" : "#e6f4ff";
+  const muted = light ? "#5f6d92" : "#7486a1";
+  const axisLine = light ? "#dfe7f7" : "rgba(120,165,206,.18)";
+  const tooltipBg = light ? "rgba(255,255,255,.98)" : "rgba(8,19,39,.96)";
+  const tooltipBorder = light ? "#dfe7f7" : "rgba(77,190,255,.25)";
+  const totalColor = light ? "#5b6bef" : "#53d6ff";
+  const positiveColor = light ? "#2f9e7a" : "#35d6a5";
+  const negativeColor = light ? "#c45b7a" : "#e5677f";
+  const labels = ["上期", ...result.chart.labels, "本期"];
+  const base: number[] = [0];
+  const values: number[] = [result.chart.baseline_total];
+  const colors: string[] = [totalColor];
+  const signed: Array<number | null> = [null];
+  let running = result.chart.baseline_total;
+  for (const delta of result.chart.deltas) {
+    if (delta >= 0) {
+      base.push(running);
+      values.push(delta);
+    } else {
+      base.push(running + delta);
+      values.push(-delta);
+    }
+    colors.push(delta >= 0 ? positiveColor : negativeColor);
+    signed.push(delta);
+    running += delta;
+  }
+  base.push(0);
+  values.push(result.chart.current_total);
+  colors.push(totalColor);
+  signed.push(null);
+  diagnosisChart?.setOption({
+    animationDuration: 900,
+    grid: { left: 8, right: 8, top: 22, bottom: 12, containLabel: true },
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      backgroundColor: tooltipBg,
+      borderColor: tooltipBorder,
+      textStyle: { color: ink, fontSize: 11 },
+      formatter: (raw: unknown) => {
+        const items = raw as Array<{ dataIndex: number }>;
+        const index = items[0]?.dataIndex ?? 0;
+        const label = labels[index] ?? "";
+        if (index === 0) return label + "<br/>合计：" + formatMetric(result.chart.baseline_total);
+        if (index === labels.length - 1) return label + "<br/>合计：" + formatMetric(result.chart.current_total);
+        const delta = signed[index] ?? 0;
+        const share = result.chart.shares_pct[index - 1];
+        const shareText = share === null || share === undefined
+          ? ""
+          : "<br/>相当于整体变化的 " + share.toFixed(1) + "%";
+        return label + "<br/>" + (delta >= 0 ? "拉动 " : "拖累 ") +
+          formatMetric(Math.abs(delta)) + shareText;
+      },
+    },
+    xAxis: {
+      type: "category",
+      data: labels,
+      axisLine: { lineStyle: { color: axisLine } },
+      axisTick: { show: false },
+      axisLabel: { color: muted, fontSize: 10, interval: 0, rotate: labels.length > 6 ? 22 : 0 },
+    },
+    yAxis: {
+      type: "value",
+      axisLabel: { color: muted, fontSize: 9 },
+      splitLine: {
+        lineStyle: {
+          color: light ? "rgba(23,36,84,.08)" : "rgba(104,153,199,.1)",
+          type: "dashed",
+        },
+      },
+      axisLine: { show: false },
+    },
+    series: [
+      {
+        name: "base",
+        type: "bar",
+        stack: "waterfall",
+        data: base,
+        barWidth: 26,
+        silent: true,
+        itemStyle: { color: "transparent" },
+        emphasis: { itemStyle: { color: "transparent" } },
+      },
+      {
+        name: "value",
+        type: "bar",
+        stack: "waterfall",
+        barWidth: 26,
+        data: values.map((value, index) => ({
+          value,
+          itemStyle: { color: colors[index] ?? totalColor, borderRadius: [4, 4, 0, 0] },
+        })),
+        label: {
+          show: true,
+          position: "top",
+          color: muted,
+          fontSize: 9,
+          formatter: (params: unknown) => {
+            const item = params as { dataIndex: number; value: number };
+            const delta = signed[item.dataIndex];
+            return delta === null || delta === undefined
+              ? formatMetric(item.value)
+              : (delta >= 0 ? "+" : "") + formatMetric(delta);
+          },
+        },
+      },
+    ],
+  } as EChartsOption, { notMerge: true });
+}
+function initDiagnosisChart() {
+  diagnosisResizeObserver?.disconnect();
+  diagnosisChart?.dispose();
+  diagnosisChart = null;
+  if (diagnosisHost.value === null) return;
+  diagnosisChart = echarts.init(diagnosisHost.value);
+  renderDiagnosisChart();
+  if (typeof ResizeObserver !== "undefined") {
+    diagnosisResizeObserver = new ResizeObserver(() => diagnosisChart?.resize());
+    diagnosisResizeObserver.observe(diagnosisHost.value);
+  }
+}
+function downloadDiagnosisReport() {
+  const result = diagnosisResult.value;
+  if (result === null) {
+    notify("请先运行一次经营诊断", "info");
+    return;
+  }
+  const lines = [
+    "# 智析 ChatBI · 经营诊断报告",
+    "",
+    "生成时间：" + new Date().toLocaleString("zh-CN"),
+    "数据源：" + result.datasource_name + "（" + result.table + "）",
+    "诊断口径：" + result.metric_label + " · " + result.dimension_label + " · " + result.time_label,
+    "引擎版本：" + result.engine_version + " · 配方 " + result.recipe_id,
+    "",
+    result.narrative,
+    "",
+    "## 证据清单",
+    ...result.evidence.map((item) =>
+      "- " + item.id + " · " + item.claim + "（" + item.method + "，样本 " + item.sample_size + "）"),
+    "",
+    "## 不变量验证",
+    ...result.verification.checks.map((item) =>
+      "- " + (item.passed ? "通过" : "未通过") + " · " + item.label + "：" + item.detail),
+    "",
+    "> 贡献分解只描述数量关系，不构成因果证明。",
+  ];
+  const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" }));
   const link = document.createElement("a");
   link.href = url;
-  link.download = "智析经营洞察-" + new Date().toISOString().slice(0, 10) + ".md";
+  link.download = "智析经营诊断-" + new Date().toISOString().slice(0, 10) + ".md";
   link.click();
   URL.revokeObjectURL(url);
-  notify("洞察报告已导出为 Markdown");
+  notify("经营诊断报告已导出为 Markdown");
+}
+
+function exportDiagnosisCsv() {
+  const result = diagnosisResult.value;
+  if (result === null) {
+    notify("请先运行一次经营诊断", "info");
+    return;
+  }
+  const period = result.period;
+  const sections: { title: string; header: string[]; rows: Scalar[][] }[] = [
+    {
+      title: "诊断概览",
+      header: ["数据源", "数据表", "指标", "分组维度", "时间字段", "引擎版本", "诊断时间"],
+      rows: [[result.datasource_name, result.table, result.metric_label, result.dimension_label,
+        result.time_label, result.engine_version, result.generated_at]],
+    },
+    {
+      title: "期间对比",
+      header: ["对比项", "本期", "上期", "差值", "变化率"],
+      rows: [
+        [result.metric_label, period.current_total, period.baseline_total, period.delta,
+          period.delta_pct === null ? "上期为零，无法计算" : `${period.delta_pct.toFixed(2)}%`],
+        ["记录数", period.current_rows, period.baseline_rows, period.current_rows - period.baseline_rows, "—"],
+      ],
+    },
+    {
+      title: "贡献分解",
+      header: ["分组", "本期", "上期", "差值", "贡献占比", "稳健期数", "一致期数", "状态"],
+      rows: [...result.contributions, ...(result.others === null ? [] : [result.others])].map((item) => [
+        item.group, item.current_value, item.baseline_value, item.delta,
+        item.share_pct === null ? "—" : `${item.share_pct.toFixed(2)}%`, item.robust_periods, item.robust_consistent,
+        item.status === "supported" ? "支持" : item.status === "contradicting" ? "反向信号" : "证据不足",
+      ]),
+    },
+    {
+      title: "证据清单",
+      header: ["编号", "分组", "结论", "数值", "单位", "方法", "样本量", "缺失率", "置信水平", "状态"],
+      rows: result.evidence.map((item) => [
+        item.id, item.group, item.claim, item.value, item.unit, item.method, item.sample_size,
+        `${(item.missing_rate * 100).toFixed(2)}%`, item.confidence_level,
+        diagnosisStatusLabel(item.status),
+      ]),
+    },
+    {
+      title: "可能原因排序",
+      header: ["排序", "假设", "得分", "状态", "支持证据", "反向证据"],
+      rows: result.hypotheses.map((item, index) => [
+        index + 1, item.text, item.score.toFixed(3), diagnosisStatusLabel(item.status),
+        item.supporting.join(" / "), item.contradicting.join(" / "),
+      ]),
+    },
+    {
+      title: "结论核对",
+      header: ["检查项", "是否通过", "说明", "置信水平"],
+      rows: result.verification.checks.map((item) => [
+        item.label, item.passed ? "通过" : "未通过", item.detail, item.confidence_level,
+      ]),
+    },
+    {
+      title: "数据质量",
+      header: ["缺失率", "覆盖率", "缺失单元格", "抽样行数", "新鲜度"],
+      rows: [[`${(result.quality.missing_rate * 100).toFixed(2)}%`, `${result.quality.coverage_pct}%`,
+        result.quality.missing_cells, result.quality.sampled_rows, result.quality.freshness]],
+    },
+  ];
+  const csv = sections
+    .map((section) => [`# ${section.title}`, rowsToCsv([section.header, ...section.rows])].join("\r\n"))
+    .join("\r\n\r\n");
+  downloadCsv(`${safeFilename(result.datasource_name)}-经营诊断-${todayStamp()}.csv`, csv);
+  notify("经营诊断数据已导出为 CSV");
 }
 async function openReport(sessionId: string) {
   await sessions.select(sessionId);
@@ -820,11 +1460,7 @@ async function askFollowUp() {
   }
 }
 function showAlerts() {
-  if (alertItems.value.length === 0) {
-    notify("当前数据源未触发预警规则", "info");
-    return;
-  }
-  notify(alertItems.value.map((item) => item.title).join("；"), "warning");
+  notificationOpen.value = true;
 }
 function openDatasources() { void router.push("/datasources"); }
 function openModelSettings() { void router.push("/settings/model"); }
@@ -847,6 +1483,14 @@ watch(activeSection, async (section) => {
   if (section === "dashboard" || section === "query") {
     await nextTick();
     initCharts();
+  }
+  if (section === "diagnosis") {
+    await nextTick();
+    if (diagnosisCapabilities.value === null && !diagnosisCapabilitiesLoading.value) {
+      await loadDiagnosis();
+    } else {
+      initDiagnosisChart();
+    }
   }
 });
 watch(() => runs.currentRun?.status, async (status) => {
@@ -875,13 +1519,26 @@ watch(() => runs.currentRun?.status, async (status) => {
       }
     }
     reportChartRunId = null;
-    if (activeSection.value === "reports") await loadReportChart();
+    if (activeSection.value === "reports") {
+      await loadReportChart();
+      await nextTick();
+      scrollFollowupToEnd();
+    }
     if (completion === "partial") {
-      notify("分析部分完成，可验证结论与查询产物已保留", "warning");
+      notify("分析部分完成，可验证结论与查询产物已保留", "warning", {
+        title: "智能问数 · 部分完成",
+        section: "reports",
+      });
     } else if (completion === "clarification") {
-      notify("分析需要补充范围后才能继续", "warning");
+      notify("分析需要补充范围后才能继续", "warning", {
+        title: "智能问数 · 需要补充",
+        section: "query",
+      });
     } else {
-      notify("分析完成，结论与证据已更新");
+      notify("分析完成，结论与证据已更新", "success", {
+        title: "智能问数 · 分析完成",
+        section: "reports",
+      });
     }
   } else {
     const message = runs.currentRun?.error_message ?? "本次分析未能完整完成，请检查数据源配置或查看运行详情。";
@@ -889,28 +1546,58 @@ watch(() => runs.currentRun?.status, async (status) => {
       followupError.value = message;
       const sessionId = sessions.currentSession?.id;
       if (sessionId) await sessions.select(sessionId);
-      notify("追问未能完成，请查看错误信息", "warning");
+      notify("追问未能完成，请查看错误信息", "warning", {
+        title: "追问 · 未完成",
+        section: "reports",
+      });
       return;
     }
     aiConclusion.value = message;
     analysisSource.value = "运行状态 · 请检查执行记录";
-    notify("分析结束，请检查运行状态", "warning");
+    notify("分析结束，请检查运行状态", "warning", {
+      title: "智能问数 · 分析未完成",
+      section: "reports",
+    });
   }
 });
 onMounted(async () => {
+  document.addEventListener("pointerdown", handleDocumentPointerDown);
+  document.addEventListener("keydown", handleDocumentKeydown);
   await Promise.allSettled([datasources.load(), models.load(), sessions.load()]);
+  const queryWorkspace = route.query.workspace;
+  if (typeof queryWorkspace === "string" && readyDatasources.value.some((item) => item.id === queryWorkspace)) {
+    preferredDatasourceId.value = queryWorkspace;
+  }
   await loadOverview();
-  preferredDatasourceId.value = datasourceReady.value?.id ?? null;
+  if (preferredDatasourceId.value === null) preferredDatasourceId.value = datasourceReady.value?.id ?? null;
+  // 支持从工作台等处通过 /workspace?section=diagnosis 直接落到指定模块。
+  const querySection = route.query.section;
+  const sections: Section[] = ["dashboard", "query", "reports", "diagnosis", "ledger", "finance"];
+  if (typeof querySection === "string" && sections.includes(querySection as Section)) {
+    selectSection(querySection as Section);
+  }
 });
 watch(preferredDatasourceId, async () => {
   runInsights.value = null;
+  diagnosisCapabilities.value = null;
+  diagnosisResult.value = null;
+  diagnosisQuestion.value = "";
+  diagnosisIntent.value = null;
   await loadOverview();
+  if (activeSection.value === "diagnosis") {
+    await loadDiagnosis();
+  }
 });
 onBeforeUnmount(() => {
+  document.removeEventListener("pointerdown", handleDocumentPointerDown);
+  document.removeEventListener("keydown", handleDocumentKeydown);
   resizeObserver?.disconnect();
   reportResizeObserver?.disconnect();
+  diagnosisResizeObserver?.disconnect();
   trendChart?.dispose(); channelChart?.dispose(); regionChart?.dispose();
   reportChart?.dispose();
+  diagnosisChart?.dispose();
+  clearReportChartImage();
   if (toastTimer !== null) window.clearTimeout(toastTimer);
 });
 </script>
@@ -923,7 +1610,7 @@ onBeforeUnmount(() => {
       <button type="button" class="workspace-select interactive" @click="openDatasources"><span class="workspace-mark"><Database :size="16" /></span><span class="workspace-copy"><small>当前工作空间</small><strong>{{ datasourceLabel }}</strong></span><ChevronDown :size="14" class="dim" /></button>
       <div class="side-label">分析空间</div>
       <nav class="side-nav" aria-label="工作空间导航">
-        <button v-for="item in navItems" :key="item.id" type="button" class="nav-item interactive" :class="{ active: activeSection === item.id }" @click="selectSection(item.id)"><component :is="item.icon" :size="17" /><span>{{ item.label }}</span><span v-if="item.id === 'reports' && reportRows.length" class="nav-count">{{ reportRows.length }}</span><i v-if="activeSection === item.id" class="nav-active" /></button>
+        <button v-for="item in navItems" :key="item.id" type="button" class="nav-item interactive" :class="{ active: activeSection === item.id }" @click="handleNavSelect(item.id)"><component :is="item.icon" :size="17" /><span>{{ item.label }}</span><span v-if="item.id === 'reports' && reportRows.length" class="nav-count">{{ reportRows.length }}</span><i v-if="activeSection === item.id" class="nav-active" /></button>
       </nav>
       <div class="side-divider" />
       <div class="side-label side-label-actions"><span>数据资源</span><button type="button" class="tiny-icon interactive" title="导入数据" @click="openUpload"><Plus :size="14" /></button></div>
@@ -932,10 +1619,10 @@ onBeforeUnmount(() => {
     </aside>
 
     <main class="main-area">
-      <header class="topbar"><div class="crumb"><span>工作空间</span><i>/</i><strong>{{ activeTitle }}</strong><span class="realtime"><i />真实数据</span></div><div class="top-actions"><div class="time-label"><i />{{ formatTime(lastUpdated) }} <span>·</span> {{ todayLabel }}</div><button class="icon-action interactive" type="button" title="帮助中心" @click="notify('帮助中心即将开放，欢迎继续探索工作台', 'info')"><CircleHelp :size="17" /></button><button class="icon-action interactive" type="button" title="刷新数据" @click="refreshDashboard"><RefreshCw :size="16" /></button><button class="icon-action interactive notification-icon" type="button" :title="alertCount + ' 条数据提醒'" @click="showAlerts"><i v-if="alertCount" /> <Activity :size="17" /></button><button type="button" class="primary-action interactive" @click="openUpload"><Upload :size="14" />导入数据</button></div></header>
+      <header class="topbar"><div class="crumb"><span>工作空间</span><i>/</i><strong>{{ activeTitle }}</strong><span class="realtime"><i />真实数据</span></div><div class="top-actions"><div class="time-label"><i />{{ formatTime(lastUpdated) }} <span>·</span> {{ todayLabel }}</div><button class="icon-action interactive" type="button" title="帮助中心" @click="notify('帮助中心即将开放，欢迎继续探索工作台', 'info')"><CircleHelp :size="17" /></button><button class="icon-action interactive" type="button" title="刷新数据" @click="refreshDashboard"><RefreshCw :size="16" /></button><div class="notification-wrap"><div v-if="notificationOpen" class="notification-backdrop" @click="notificationOpen = false" /><button class="icon-action interactive notification-icon" :class="{ active: notificationOpen }" type="button" :title="unreadCount ? unreadCount + ' 条未读消息' : '消息提醒'" :aria-expanded="notificationOpen" aria-haspopup="dialog" @click="toggleNotificationList"><Bell :size="17" /><span v-if="unreadCount" class="notification-badge">{{ unreadCount > 9 ? "9+" : unreadCount }}</span><i v-else-if="alertCount" class="bell-dot" /></button><div v-if="notificationOpen" class="notification-popover" role="dialog" aria-label="消息提醒"><header class="notification-head"><div><strong>消息提醒</strong><small>{{ unreadCount ? unreadCount + " 条未读" : "全部已读" }}</small></div><button v-if="unreadCount" type="button" class="notification-head-action interactive" @click="markAllNotificationsRead">全部已读</button></header><div class="notification-list"><button v-for="item in notifications" :key="item.id" type="button" class="notification-row interactive" :class="['notif-' + item.kind, { unread: !item.read }]" @click="openNotification(item)"><span class="notif-icon"><Check v-if="item.kind === 'success'" :size="13" /><AlertTriangle v-else-if="item.kind === 'warning'" :size="13" /><Sparkles v-else :size="13" /></span><span class="notif-body"><span class="notif-meta"><strong>{{ item.title }}</strong><em>{{ formatNotificationTime(item.createdAt) }}</em></span><small>{{ item.detail }}</small></span><i v-if="!item.read" class="notif-dot" /></button><div v-if="notifications.length === 0" class="notification-empty"><Bell :size="20" /><strong>暂无消息</strong><span>智能问数或经营诊断完成后，会在这里留下提醒。</span></div></div><footer class="notification-foot"><span>仅保留最近 30 条</span><button v-if="notifications.length > unreadCount" type="button" class="interactive" @click="clearReadNotifications">清除已读</button></footer></div></div><button class="icon-action interactive" type="button" :title="isDark ? '切换日间模式' : '切换夜间模式'" @click="toggleTheme"><Sun v-if="isDark" :size="17" /><Moon v-else :size="17" /></button><button type="button" class="primary-action interactive" @click="openUpload"><Upload :size="14" />导入数据</button></div></header>
       <div ref="pageScroll" class="page-scroll"><div class="page-content">
         <template v-if="activeSection === 'dashboard' || activeSection === 'query'">
-          <section class="page-heading"><div><div class="eyebrow"><i />{{ todayLabel }} · 真实数据总览</div><h1>{{ greeting }}，让数据 <span>回答问题。</span></h1><p>用自然语言探索业务，让每一份洞察都有据可查。</p></div><button type="button" class="date-range interactive" @click="notify(overview ? '当前视图基于「' + overview.datasource_name + '」实时聚合，共 ' + formatCount(overview.row_count) + ' 条真实记录' : '尚未读取到真实数据源', 'info')"><Clock3 :size="15" />{{ dateRangeLabel }}<ChevronDown :size="13" /></button></section>
+          <section class="page-heading cockpit-heading"><div><h1 class="serif-title">{{ greeting }}，让数据 <span>回答问题</span>。</h1><p>用自然语言探索业务，让每一份洞察都有据可查。</p></div><div class="heading-actions"><button type="button" class="outline-action interactive" @click="exportDashboardCsv"><FileSpreadsheet :size="14" />导出数据</button><button type="button" class="date-range interactive" @click="notify(overview ? '当前视图基于「' + overview.datasource_name + '」实时聚合，共 ' + formatCount(overview.row_count) + ' 条真实记录' : '尚未读取到真实数据源', 'info')"><Clock3 :size="15" />{{ dateRangeLabel }}<ChevronDown :size="13" /></button></div></section>
           <section v-if="metrics.length" class="metric-grid" aria-label="核心数据指标">
             <article v-for="(metric, index) in metrics" :key="metric.key" class="metric-card interactive" :class="'metric-' + metric.tone" :style="{ '--card-index': index }"><div class="metric-top"><span>{{ metric.label }}</span><i><component :is="metricIcon(metric.key)" :size="16" /></i></div><div class="metric-value-row"><strong>{{ metric.value }}</strong><svg v-if="metric.spark.length > 1" class="mini-spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"><path :d="sparkPath(metric.spark)" /></svg></div><div class="metric-foot"><span v-if="metric.change" class="metric-change" :class="metric.change_tone"><ArrowUpRight v-if="metric.change_tone !== 'down'" :size="13" /><ArrowDownRight v-else :size="13" />{{ metric.change }}</span><span>{{ metric.detail }}</span></div><i class="metric-accent" /></article>
           </section>
@@ -944,21 +1631,281 @@ onBeforeUnmount(() => {
             <article class="panel trend-panel"><header class="panel-heading"><div><div class="panel-kicker"><i />数据趋势</div><h2>{{ overview?.trend?.title ?? "月度趋势" }} <span>·</span> <small>Monthly Trend</small></h2></div><div class="panel-tools"><span class="live-pill"><i />真实数据</span><button type="button" class="menu-button interactive" aria-label="趋势选项" @click="notify(overview?.trend?.subtitle ?? '当前数据源暂无月份字段', 'info')"><MoreHorizontal :size="18" /></button></div></header><div class="trend-total"><strong>{{ overview ? formatCount(overview.row_count) : "—" }}</strong><span>条记录</span><em>{{ dateRangeLabel }}</em><div v-if="trendLegendItems.length" class="trend-legend-inline"><span v-for="item in trendLegendItems" :key="item.name"><i class="legend-dot" :class="item.tone" />{{ item.name }}</span></div></div><div v-if="overview?.trend" ref="trendHost" class="trend-chart" role="img" :aria-label="overview.trend.title" /><div v-else class="trend-chart data-empty chart-empty"><span>当前数据源暂无可用的月份字段</span></div><div class="chart-foot"><span><i class="legend-dot cyan" />{{ overview?.trend?.subtitle || trendLegend }}</span><span>更新于 {{ formatTime(lastUpdated) }}</span><button type="button" @click="selectSection('reports')">查看分析 <ArrowUpRight :size="13" /></button></div></article>
             <article class="panel insight-panel"><header class="panel-heading"><div><div class="panel-kicker"><Sparkles :size="13" />数据洞察</div><h2>值得关注的信号</h2></div><button type="button" class="text-action interactive" @click="selectSection('reports')">全部洞察 <ArrowUpRight :size="13" /></button></header><div class="insight-scroll"><div class="briefing"><span class="briefing-orb"><BrainCircuit :size="19" /></span><div><small>REAL DATA BRIEFING</small><p>{{ briefingText }}</p></div></div><div class="insight-list"><button v-for="item in insightItems" :key="item.title" type="button" class="insight-row interactive" :class="'insight-' + item.kind" @click="notify(item.detail, item.kind === 'warning' ? 'warning' : 'info')"><i class="insight-symbol"><component :is="insightIcon(item.kind)" :size="15" /></i><span class="insight-body"><span class="insight-row-meta"><em>{{ item.label }}</em><small>{{ item.time }}</small></span><strong>{{ item.title }}</strong><small>{{ item.detail }}</small></span><ArrowUpRight :size="14" class="insight-arrow" /></button></div></div><button type="button" class="weekly-link interactive" @click="selectSection('reports')"><span><Lightbulb :size="14" />{{ overview ? "全部指标由真实数据源即时聚合" : "等待真实数据源接入" }}</span><ArrowUpRight :size="14" /></button></article>
           </section>
-          <section ref="queryDock" class="query-dock" :class="{ analyzing: isAnalyzing }"><div class="query-head"><div class="query-title"><span><Sparkles :size="14" /></span><strong>问问你的数据</strong><em>AI POWERED</em></div><select v-if="readyDatasources.length > 1" v-model="preferredDatasourceId" class="query-source query-source-select" aria-label="选择分析数据源"><option v-for="item in readyDatasources" :key="item.id" :value="item.id">{{ item.name }}</option></select><button v-else type="button" class="query-source interactive" @click="openDatasources"><Database :size="13" />{{ datasourceLabel }}<ChevronDown :size="13" /></button></div><div class="query-input-row"><textarea ref="queryInput" v-model="question" rows="1" aria-label="输入数据分析问题" :placeholder="queryPlaceholder" @keydown.enter.exact.prevent="submitQuestion" /><div class="query-tools"><button type="button" class="add-question interactive" title="上传数据" @click="openUpload"><Plus :size="17" /></button><i /><button type="button" class="send-button interactive" :disabled="!question.trim() || isAnalyzing" :aria-label="isAnalyzing ? '正在分析' : '发送问题'" @click="submitQuestion"><span v-if="isAnalyzing" class="spinner" /><Send v-else :size="15" /></button></div></div><div class="query-foot"><div class="prompt-list"><span>试试</span><button v-for="prompt in prompts" :key="prompt" type="button" class="prompt-chip interactive" @click="setPrompt(prompt)">{{ prompt }}</button></div><span class="secure-note"><ShieldCheck :size="12" />只读分析 · 数据安全</span></div></section>
-          <section class="answer-card"><span class="answer-glyph"><Sparkles :size="16" /></span><div class="answer-body"><div><em>{{ isAnalyzing ? "ANALYZING" : "DATA INSIGHT" }}</em><span><i />{{ analysisSource }}</span></div><p><strong>{{ latestQuestion }}</strong>{{ aiConclusion }}</p></div><button type="button" class="evidence-button interactive" @click="selectSection('reports')"><ShieldCheck :size="14" />查看证据 <span>↗</span></button></section>
           <section class="bottom-grid">
             <article class="panel channel-panel"><header class="panel-heading compact-heading"><div><div class="panel-kicker">分组结构</div><h2>{{ distribution?.title ?? "字段分布" }}</h2></div><button type="button" class="menu-button interactive" @click="selectSection('reports')"><MoreHorizontal :size="18" /></button></header><div v-if="distribution" class="channel-content"><div ref="channelHost" class="channel-chart" role="img" :aria-label="distribution.title + '环图'" /><div class="channel-legend"><button v-for="item in channelLegend" :key="item.name" type="button" class="interactive" @click="notify(item.name + '占全部记录 ' + item.value, 'info')"><i :class="item.color" />{{ item.name }}<strong>{{ item.value }}</strong></button></div></div><div v-else class="data-empty channel-empty"><span>当前数据源暂无可分组字段</span></div></article>
             <article class="panel region-panel"><header class="panel-heading compact-heading"><div><div class="panel-kicker">分组表现</div><h2>{{ ranking?.title ?? "分组排名" }}</h2></div><button type="button" class="range-mini interactive" @click="notify('已按' + (ranking?.metric_label ?? '占比') + '由高到低排序', 'info')">全量 <ChevronDown :size="12" /></button></header><div v-if="ranking" ref="regionHost" class="region-chart" role="img" :aria-label="ranking.title + '横向柱状图'" /><div v-else class="region-chart data-empty chart-empty"><span>当前数据源暂无可排名分组</span></div><div v-if="ranking" class="region-foot"><span><i class="legend-dot cyan" />{{ ranking.label }} · {{ ranking.metric_label }}</span><strong>{{ ranking.items[0]?.name }} {{ ranking.items[0]?.conversion_pct ?? ranking.items[0]?.share_pct }}%</strong><button type="button" @click="notify('排名由当前数据源实时聚合', 'info')">数据口径 <CircleHelp :size="12" /></button></div></article>
             <article class="panel alert-panel"><header class="panel-heading compact-heading"><div><div class="panel-kicker">数据监测</div><h2>数据预警 <em v-if="alertCount" class="alert-count">{{ alertCount }}</em></h2></div><button type="button" class="text-action interactive" @click="showAlerts">查看全部 <ArrowUpRight :size="13" /></button></header><button v-for="(alert, index) in alertItems" :key="alert.title" type="button" class="alert-row interactive" :class="{ 'amber-alert': alert.level === 'info' || index > 0 }" @click="notify(alert.detail, alert.level)"><i><component :is="alertIcon(alert.level)" :size="14" /></i><span><strong>{{ alert.title }}</strong><small>{{ alert.detail }}</small></span><em>{{ alert.level === "warning" ? "关注" : "分析" }}</em></button><div v-if="alertItems.length === 0" class="alert-empty"><span>当前数据源未触发预警规则</span></div><div class="alert-foot"><span><i />聚合规则运行正常</span><small>{{ formatTime(lastUpdated) }} 更新</small></div></article>
           </section>
+          <section ref="queryDock" class="query-dock" :class="{ analyzing: isAnalyzing }"><div class="query-head"><div class="query-title"><span><Sparkles :size="14" /></span><strong>问问你的数据</strong><em>AI POWERED</em></div><select v-if="readyDatasources.length > 1" v-model="preferredDatasourceId" class="query-source query-source-select" aria-label="选择分析数据源"><option v-for="item in readyDatasources" :key="item.id" :value="item.id">{{ item.name }}</option></select><button v-else type="button" class="query-source interactive" @click="openDatasources"><Database :size="13" />{{ datasourceLabel }}<ChevronDown :size="13" /></button></div><div class="query-input-row"><textarea ref="queryInput" v-model="question" rows="1" aria-label="输入数据分析问题" :placeholder="queryPlaceholder" @keydown.enter.exact.prevent="submitQuestion" /><div class="query-tools"><button type="button" class="add-question interactive" title="上传数据" @click="openUpload"><Plus :size="17" /></button><i /><button type="button" class="send-button interactive" :disabled="!question.trim() || isAnalyzing" :aria-label="isAnalyzing ? '正在分析' : '发送问题'" @click="submitQuestion"><span v-if="isAnalyzing" class="spinner" /><Send v-else :size="15" /></button></div></div><div class="query-foot"><div class="prompt-list"><span>试试</span><button v-for="prompt in prompts" :key="prompt" type="button" class="prompt-chip interactive" @click="setPrompt(prompt)">{{ prompt }}</button></div><span class="secure-note"><ShieldCheck :size="12" />只读分析 · 数据安全</span></div></section>
+          <section class="answer-card"><span class="answer-glyph"><Sparkles :size="16" /></span><div class="answer-body"><div><em>{{ isAnalyzing ? "ANALYZING" : "DATA INSIGHT" }}</em><span><i />{{ analysisSource }}</span></div><p><strong>{{ latestQuestion }}</strong>{{ aiConclusion }}</p></div><button type="button" class="evidence-button interactive" @click="selectSection('reports')"><ShieldCheck :size="14" />查看证据 <span>↗</span></button></section>
           <footer class="page-footer"><span>智析 ChatBI <i>·</i> 让每个决策都有数据依据</span><span>Agent <i class="footer-agent" />{{ liveAgentReady ? "已连接" : "待配置" }} <b>·</b> {{ runs.currentRun?.status === "running" ? "分析执行中" : runs.currentRun?.status === "succeeded" ? "刚刚完成一次分析" : overview ? "真实数据已同步" : "等待数据源" }}</span></footer>
         </template>
 
         <template v-else-if="activeSection === 'reports'">
-          <section class="page-heading module-heading"><div><div class="eyebrow"><i />REAL DATA · EVIDENCE READY</div><h1>洞察报告 <span>一目了然。</span></h1><p>每份分析都包含清晰口径、证据引用和可追溯的运行记录。</p></div><button class="primary-action interactive" type="button" @click="downloadReport"><Download :size="14" />导出最新报告</button></section>
-          <section class="panel report-hero"><div class="report-copy"><span class="report-label"><Sparkles :size="13" />真实数据简报 · {{ overview?.period_label ?? "等待数据源" }}</span><h2>{{ latestQuestion }}</h2><p>{{ aiConclusion }}</p><div class="report-meta"><span><Database :size="13" />{{ analysisSource }}</span><span><ShieldCheck :size="13" />指标由真实数据源即时聚合</span></div><button type="button" class="primary-action interactive" @click="downloadReport"><FileText :size="14" />导出完整报告</button></div><div class="report-art"><div class="report-chart-head"><span><BarChart3 :size="13" />分析图表</span><em>{{ reportChartPayload?.summary ?? "真实查询结果" }}</em></div><div v-if="reportChartPayload" ref="reportChartHost" class="report-chart" role="img" :aria-label="reportChartPayload.summary" /><div v-else class="report-chart-empty"><BarChart3 :size="18" /><span>{{ reportChartLoading ? "正在从查询产物生成图表…" : reportChartNote }}</span></div><div class="report-chart-foot"><span>{{ reportChartPayload?.note ?? "图表由本次受控 SQL 查询结果生成" }}</span><button v-if="reportRun" type="button" class="interactive" @click="selectSection('query')">继续分析 <ArrowUpRight :size="12" /></button></div></div></section>
-          <section class="panel followup-panel"><header class="panel-heading"><div><div class="panel-kicker">CONTEXT FOLLOW-UP</div><h2>继续追问这份报告</h2></div><span class="followup-context"><MessageSquareText :size="12" />{{ followupContext }}</span></header><div class="followup-thread"><div v-for="message in followupMessages" :key="message.id" class="followup-item" :class="message.role"><small>{{ message.role === "user" ? "你" : "智析" }}</small><p>{{ message.content_text }}</p></div><div v-if="followupPending" class="followup-item user"><small>你</small><p>{{ pendingFollowupQuestion }}</p></div><div v-if="followupPending" class="followup-item assistant pending"><small>智析</small><p>正在沿用当前会话上下文继续查询真实数据…</p></div><div v-if="followupError" class="followup-item assistant error"><small>智析</small><p>{{ followupError }}</p></div><div v-if="!followupMessages.length && !followupPending && !followupError" class="followup-empty"><span>在上方智能问数中完成一次分析后，就可以在这里基于报告继续追问。</span></div></div><div class="followup-input-row"><textarea ref="followupInput" v-model="followupQuestion" rows="1" placeholder="基于当前报告继续追问，例如：按流量类型拆分呢？" @keydown.enter.exact.prevent="askFollowUp" /><button type="button" class="send-button interactive" :disabled="!followupQuestion.trim() || followupPending || !followupReady" :aria-label="followupPending ? '追问分析中' : '发送追问'" @click="askFollowUp"><span v-if="followupPending" class="spinner" /><Send v-else :size="15" /></button></div><div class="followup-foot"><span>追问会沿用当前会话与数据源</span><span>{{ followupReady ? "Agent 已就绪" : "请先在智能问数中完成一次分析" }}</span></div></section>
+          <section class="page-heading module-heading"><div><div class="eyebrow"><i />REAL DATA · EVIDENCE READY</div><h1 class="serif-title">洞察报告 <span>一目了然</span>。</h1><p>每份分析都包含清晰口径、证据引用和可追溯的运行记录。</p></div><div class="heading-actions"><button class="outline-action interactive" type="button" @click="exportReportCsv"><FileSpreadsheet :size="14" />导出数据 CSV</button><button class="primary-action interactive" type="button" @click="downloadReport"><Download :size="14" />导出最新报告</button></div></section>
+          <section class="panel report-hero"><div class="report-copy"><span class="report-label"><Sparkles :size="13" />真实数据简报 · {{ overview?.period_label ?? "等待数据源" }}</span><h2>{{ latestQuestion }}</h2><p>{{ aiConclusion }}</p><div class="report-meta"><span><Database :size="13" />{{ analysisSource }}</span><span><ShieldCheck :size="13" />指标由真实数据源即时聚合</span></div><button type="button" class="primary-action interactive" @click="downloadReport"><FileText :size="14" />导出完整报告</button></div><div class="report-art"><div class="report-chart-head"><span><BarChart3 :size="13" />分析图表</span><em>{{ reportChartImage ? reportChartNote : (reportChartPayload?.summary ?? "真实查询结果") }}</em></div><img v-if="reportChartImage" :src="reportChartImage" class="report-chart-image" alt="分析图表" /><div v-else-if="reportChartPayload" ref="reportChartHost" class="report-chart" role="img" :aria-label="reportChartPayload.summary" /><div v-else class="report-chart-empty"><BarChart3 :size="18" /><span>{{ reportChartLoading ? "正在从查询产物生成图表…" : reportChartNote }}</span></div><div class="report-chart-foot"><span>{{ reportChartImage ? reportChartNote : (reportChartPayload?.note ?? "图表由本次受控 SQL 查询结果生成") }}</span><button v-if="reportRun" type="button" class="interactive" @click="selectSection('query')">继续分析 <ArrowUpRight :size="12" /></button></div></div></section>
+          <section class="panel followup-panel"><header class="panel-heading"><div><div class="panel-kicker">CONTEXT FOLLOW-UP</div><h2>继续追问这份报告</h2></div><span class="followup-context"><MessageSquareText :size="12" />{{ followupContext }}</span></header><div ref="followupThread" class="followup-thread"><div v-for="message in followupMessages" :key="message.id" class="followup-item" :class="message.role"><small>{{ message.role === "user" ? "你" : "智析" }}</small><div class="followup-body"><p>{{ message.content_text }}</p><AskAnswerChart v-if="message.id === followupChartMessageId && message.run_id" :run-id="message.run_id" @rendered="scrollFollowupToEnd" /></div></div><div v-if="followupPending" class="followup-item user"><small>你</small><p>{{ pendingFollowupQuestion }}</p></div><div v-if="followupPending" class="followup-item assistant pending"><small>智析</small><p>正在沿用当前会话上下文继续查询真实数据…</p></div><div v-if="followupError" class="followup-item assistant error"><small>智析</small><p>{{ followupError }}</p></div><div v-if="!followupMessages.length && !followupPending && !followupError" class="followup-empty"><span>在上方智能问数中完成一次分析后，就可以在这里基于报告继续追问。</span></div></div><div class="followup-input-row"><textarea ref="followupInput" v-model="followupQuestion" rows="1" placeholder="基于当前报告继续追问，例如：按流量类型拆分呢？" @keydown.enter.exact.prevent="askFollowUp" /><button type="button" class="send-button interactive" :disabled="!followupQuestion.trim() || followupPending || !followupReady" :aria-label="followupPending ? '追问分析中' : '发送追问'" @click="askFollowUp"><span v-if="followupPending" class="spinner" /><Send v-else :size="15" /></button></div><div class="followup-foot"><span>追问会沿用当前会话与数据源</span><span>{{ followupReady ? "Agent 已就绪" : "请先在智能问数中完成一次分析" }}</span></div></section>
           <section class="panel table-panel"><header class="panel-heading"><div><div class="panel-kicker">ANALYSIS HISTORY</div><h2>最近的分析会话</h2></div><button type="button" class="outline-action interactive" @click="sessions.load()"><RefreshCw :size="14" />刷新</button></header><div v-if="reportRows.length" class="data-table"><div class="table-row table-head"><span>报告名称</span><span>数据源</span><span>生成时间</span><span>状态</span><span /></div><button v-for="row in reportRows" :key="row.id" type="button" class="table-row interactive" @click="openReport(row.id)"><span class="report-name"><i><FileText :size="15" /></i><strong>{{ row.title }}</strong></span><span>{{ row.type }}</span><span>{{ row.time }}</span><span class="success-state"><Check :size="13" />可回放</span><ArrowUpRight :size="15" /></button></div><div v-else class="data-empty table-empty"><FileText :size="20" /><strong>暂无真实分析报告</strong><span>在智能问数中发起一次真实分析后，会话与证据链会自动出现在这里。</span><button type="button" class="outline-action interactive" @click="selectSection('query')">去提问</button></div></section>
+        </template>
+
+        <template v-else-if="activeSection === 'diagnosis'">
+          <section class="page-heading module-heading diagnosis-heading">
+            <div>
+              <div class="eyebrow"><i />经营诊断 · 结论可复核</div>
+              <h1>经营诊断 <span>先看结论，再看原因。</span></h1>
+              <p>可以直接用一句话提问，也可以手动选择指标和分组；结论和计算细节都可复核。</p>
+            </div>
+            <div class="heading-actions">
+              <button class="outline-action interactive" type="button" :disabled="!diagnosisResult" @click="exportDiagnosisCsv">
+                <FileSpreadsheet :size="14" />导出数据 CSV
+              </button>
+              <button class="primary-action interactive" type="button" :disabled="!diagnosisResult" @click="downloadDiagnosisReport">
+                <Download :size="14" />导出诊断报告
+              </button>
+            </div>
+          </section>
+
+          <section class="panel diagnosis-ask">
+            <div class="diagnosis-ask-head">
+              <span class="diagnosis-ask-icon"><Sparkles :size="15" /></span>
+              <div>
+                <strong>用一句话问诊断</strong>
+                <small>AI 解析问题后自动选好指标、分组和时间，也可以手动修改</small>
+              </div>
+              <em>{{ diagnosisIntent ? (diagnosisIntent.source === "model" ? "AI 解析" : "规则识别") : "自然语言" }}</em>
+            </div>
+            <form class="diagnosis-ask-form" @submit.prevent="askDiagnosis">
+              <input v-model="diagnosisQuestion" :placeholder="diagnosisAskPlaceholder" :disabled="diagnosisAsking" aria-label="用一句话问经营诊断" />
+              <button type="submit" class="primary-action interactive" :disabled="diagnosisAsking || !diagnosisQuestion.trim() || !diagnosisReady">
+                <span v-if="diagnosisAsking" class="spinner" /><Send v-else :size="14" />{{ diagnosisAsking ? "解析中" : "问诊断" }}
+              </button>
+            </form>
+            <div v-if="diagnosisIntent" class="diagnosis-ask-understood" :class="{ failed: !diagnosisIntent.understood }">
+              <span class="intent-tag">{{ diagnosisIntent.understood ? "已理解" : "需补充" }}</span>
+              <span>{{ diagnosisIntent.explanation }}</span>
+              <em v-if="diagnosisIntent.confidence > 0">置信 {{ Math.round(diagnosisIntent.confidence * 100) }}%</em>
+            </div>
+            <div v-if="diagnosisSuggestions.length" class="diagnosis-ask-suggestions">
+              <span>试试</span>
+              <button v-for="text in diagnosisSuggestions" :key="text" type="button" class="interactive" @click="applyDiagnosisQuestion(text)">{{ text }}</button>
+            </div>
+          </section>
+
+          <section class="panel diagnosis-config">
+            <header class="panel-heading">
+              <div><div class="panel-kicker"><Stethoscope :size="13" />DIAGNOSIS SETTINGS</div><h2>分析设置</h2></div>
+              <div class="diagnosis-config-actions">
+                <select v-if="readyDatasources.length > 1" v-model="preferredDatasourceId" class="diagnosis-select" aria-label="选择诊断数据源">
+                  <option v-for="item in readyDatasources" :key="item.id" :value="item.id">{{ item.name }}</option>
+                </select>
+                <button type="button" class="outline-action interactive" :disabled="diagnosisCapabilitiesLoading" @click="loadDiagnosis(true)">
+                  <RefreshCw :size="14" />{{ diagnosisCapabilitiesLoading ? "识别中" : "重新识别字段" }}
+                </button>
+              </div>
+            </header>
+            <div class="diagnosis-controls">
+              <label class="diagnosis-field">
+                <span>看哪个指标（合计）</span>
+                <select v-model="diagnosisMetric" :disabled="!diagnosisReady || diagnosisRunning" @change="clearDiagnosisIntent">
+                  <option v-for="item in diagnosisCapabilities?.measures ?? []" :key="item.name" :value="item.name">{{ item.label }}</option>
+                </select>
+              </label>
+              <label class="diagnosis-field">
+                <span>按什么分组对比</span>
+                <select v-model="diagnosisDimension" :disabled="!diagnosisReady || diagnosisRunning" @change="clearDiagnosisIntent">
+                  <option v-for="item in diagnosisCapabilities?.dimensions ?? []" :key="item.name" :value="item.name">{{ item.label }}</option>
+                </select>
+              </label>
+              <label class="diagnosis-field">
+                <span>按哪个时间字段（按月）</span>
+                <select v-model="diagnosisTime" :disabled="!diagnosisReady || diagnosisRunning" @change="clearDiagnosisIntent">
+                  <option v-for="item in diagnosisCapabilities?.time_columns ?? []" :key="item.name" :value="item.name">{{ item.label }}</option>
+                </select>
+              </label>
+              <label class="diagnosis-field narrow">
+                <span>展示几个原因</span>
+                <select v-model.number="diagnosisTopN" :disabled="!diagnosisReady || diagnosisRunning">
+                  <option :value="4">4</option>
+                  <option :value="6">6</option>
+                  <option :value="8">8</option>
+                </select>
+              </label>
+              <button type="button" class="primary-action diagnosis-run interactive" :disabled="!diagnosisReady || diagnosisRunning" @click="executeDiagnosis">
+                <span v-if="diagnosisRunning" class="spinner" /><Activity v-else :size="14" />{{ diagnosisRunning ? "诊断中" : "开始诊断" }}
+              </button>
+            </div>
+            <div class="diagnosis-pillars">
+              <span><i>01</i>看清增减来源</span>
+              <span><i>02</i>给出可能原因</span>
+              <span><i>03</i>标注可信程度</span>
+              <span><i>04</i>数据可以复核</span>
+              <em v-if="diagnosisCapabilities">{{ formatCount(diagnosisCapabilities.row_count) }} 条记录 · {{ diagnosisCapabilities.table }}</em>
+              <em v-else>等待数据源</em>
+            </div>
+          </section>
+
+          <section v-if="!diagnosisReady" class="panel data-empty diagnosis-empty">
+            <Stethoscope :size="24" />
+            <strong>{{ diagnosisCapabilitiesLoading ? "正在识别可诊断字段…" : "当前数据源暂不可诊断" }}</strong>
+            <span>{{ diagnosisError ?? diagnosisCapabilities?.message ?? "请先在数据资产中接入真实数据源并确认遮蔽字段。" }}</span>
+            <button type="button" class="outline-action interactive" @click="openDatasources">查看数据资产</button>
+          </section>
+
+          <template v-else>
+            <template v-if="diagnosisResult">
+              <section class="panel diagnosis-headline">
+                <div class="diagnosis-headline-copy">
+                  <small>一句话结论</small>
+                  <p>{{ diagnosisHeadline }}</p>
+                  <div class="diagnosis-headline-tags">
+                    <span v-if="diagnosisDrivers.drag" class="diagnosis-driver down">主要拖累 · {{ diagnosisDrivers.drag.group }} {{ formatSigned(diagnosisDrivers.drag.delta) }}</span>
+                    <span v-if="diagnosisDrivers.lift" class="diagnosis-driver up">主要拉动 · {{ diagnosisDrivers.lift.group }} {{ formatSigned(diagnosisDrivers.lift.delta) }}</span>
+                  </div>
+                </div>
+                <div class="diagnosis-headline-side" :class="'verify-' + diagnosisResult.verification.status">
+                  <span>结论核对</span>
+                  <strong>{{ diagnosisResult.verification.passed }}/{{ diagnosisResult.verification.total }}</strong>
+                  <small>{{ diagnosisVerificationText }}</small>
+                </div>
+              </section>
+
+              <section class="diagnosis-kpis">
+                <article class="panel diagnosis-kpi">
+                  <span>本期 {{ diagnosisResult.period.current_label }} · {{ diagnosisResult.metric_label }}</span>
+                  <strong>{{ formatMetric(diagnosisResult.period.current_total) }}</strong>
+                  <small>{{ formatCount(diagnosisResult.period.current_rows) }} 条记录</small>
+                </article>
+                <article class="panel diagnosis-kpi">
+                  <span>上期 {{ diagnosisResult.period.baseline_label }}</span>
+                  <strong>{{ formatMetric(diagnosisResult.period.baseline_total) }}</strong>
+                  <small>{{ formatCount(diagnosisResult.period.baseline_rows) }} 条记录</small>
+                </article>
+                <article class="panel diagnosis-kpi" :class="{ 'kpi-down': diagnosisResult.period.delta < 0 }">
+                  <span>净变化</span>
+                  <strong>{{ diagnosisResult.period.delta >= 0 ? "+" : "" }}{{ formatMetric(diagnosisResult.period.delta) }}</strong>
+                  <small>{{ diagnosisResult.period.delta_pct === null ? "上期为零，无法计算百分比" : (diagnosisResult.period.delta_pct >= 0 ? "+" : "") + diagnosisResult.period.delta_pct.toFixed(2) + "%" }}</small>
+                </article>
+                <article class="panel diagnosis-kpi" :class="'verify-' + diagnosisResult.verification.status">
+                  <span>结论核对</span>
+                  <strong>{{ diagnosisResult.verification.passed }}/{{ diagnosisResult.verification.total }}</strong>
+                  <small>{{ diagnosisVerificationText }}</small>
+                </article>
+              </section>
+
+              <section class="diagnosis-grid">
+                <article class="panel diagnosis-chart-panel">
+                  <header class="panel-heading">
+                    <div><div class="panel-kicker">WHERE THE CHANGE CAME FROM</div><h2>谁在拉动，谁在拖累</h2></div>
+                    <span class="diagnosis-tag">按{{ diagnosisResult.dimension_label }} · 前 {{ diagnosisResult.contributions.length }} 项</span>
+                  </header>
+                  <div ref="diagnosisHost" class="diagnosis-chart" role="img" aria-label="各分组拉动与拖累金额" />
+                  <div class="chart-foot">
+                    <span>{{ diagnosisResult.chart.baseline_label }} → {{ diagnosisResult.chart.current_label }}</span>
+                    <span>各项有增有减，单项占比可能超过 100%</span>
+                  </div>
+                </article>
+                <article class="panel diagnosis-hypotheses">
+                  <header class="panel-heading">
+                    <div><div class="panel-kicker">POSSIBLE REASONS</div><h2>可能原因</h2></div>
+                    <span class="diagnosis-tag">{{ diagnosisResult.hypotheses.length }} 条 · 按可信度排序</span>
+                  </header>
+                  <div v-for="(hypothesis, index) in diagnosisResult.hypotheses" :key="hypothesis.id" class="diagnosis-hypothesis" :class="'hyp-' + hypothesis.status">
+                    <div class="hyp-head">
+                      <strong>原因 {{ index + 1 }} · {{ diagnosisStatusLabel(hypothesis.status) }}</strong>
+                      <em>{{ Math.round(hypothesis.score * 100) }}<small> 分</small></em>
+                    </div>
+                    <p>{{ hypothesisPlainText(hypothesis) }}</p>
+                    <div class="hyp-meter"><i :style="{ width: Math.round(hypothesis.score * 100) + '%' }" /></div>
+                    <div class="hyp-evidence">{{ hypothesisEvidenceSummary(hypothesis) }}</div>
+                  </div>
+                </article>
+              </section>
+
+              <section class="panel diagnosis-checks">
+                <header class="panel-heading">
+                  <div><div class="panel-kicker">CONSISTENCY CHECKS</div><h2>结论核对</h2></div>
+                  <span class="diagnosis-tag" :class="'verify-' + diagnosisResult.verification.status">{{ diagnosisStatusLabel(diagnosisResult.verification.status) }}</span>
+                </header>
+                <div class="diagnosis-check-grid">
+                  <div v-for="check in diagnosisResult.verification.checks" :key="check.name" class="diagnosis-check" :class="{ failed: !check.passed }">
+                    <i><Check v-if="check.passed" :size="13" /><AlertTriangle v-else :size="13" /></i>
+                    <div><strong>{{ diagnosisCheckLabel(check.name) }}</strong><small>{{ check.passed ? "通过" : "未通过" }}</small></div>
+                  </div>
+                </div>
+                <p class="diagnosis-note">核对只确认分项与整体能对上、数据足够完整，不代表因果关系。</p>
+              </section>
+
+              <section class="diagnosis-technical">
+                <button type="button" class="diagnosis-technical-toggle interactive" @click="diagnosisTechnicalOpen = !diagnosisTechnicalOpen">
+                  <span><Settings2 :size="14" />查看计算口径与验证细节</span>
+                  <ChevronDown :size="15" :class="{ open: diagnosisTechnicalOpen }" />
+                </button>
+                <div v-if="diagnosisTechnicalOpen" class="diagnosis-technical-body">
+                  <div class="diagnosis-tech-grid">
+                    <article class="panel diagnosis-tech-card">
+                      <strong>引擎能力</strong>
+                      <ul>
+                        <li>确定性配方编译（结果可复现）</li>
+                        <li>贡献分解算子</li>
+                        <li>假设-证据图</li>
+                        <li>不变量验证</li>
+                      </ul>
+                    </article>
+                    <article class="panel diagnosis-tech-card">
+                      <strong>配方信息</strong>
+                      <div class="tech-line"><span>配方编号</span><code>{{ diagnosisResult.recipe_id }}</code></div>
+                      <div class="tech-line"><span>配方哈希</span><code>{{ diagnosisResult.recipe_hash.slice(0, 24) }}…</code></div>
+                      <div class="tech-line"><span>引擎 / 数据结构</span><em>{{ diagnosisResult.engine_version }} · v{{ diagnosisResult.schema_revision }}</em></div>
+                      <div class="tech-line"><span>耗时 / 生成时间</span><em>{{ diagnosisResult.duration_ms }} ms · {{ diagnosisResult.generated_at }}</em></div>
+                    </article>
+                  </div>
+
+                  <article class="panel diagnosis-tech-card">
+                    <strong>引擎原始叙述</strong>
+                    <div class="diagnosis-narrative-body">
+                      <template v-for="(block, index) in diagnosisNarrativeBlocks" :key="index">
+                        <h3 v-if="block.type === 'heading'">{{ block.text }}</h3>
+                        <p v-else-if="block.type === 'item'" class="narrative-item">{{ block.text }}</p>
+                        <p v-else>{{ block.text }}</p>
+                      </template>
+                    </div>
+                  </article>
+
+                  <article class="panel diagnosis-evidence">
+                    <header class="panel-heading"><div><div class="panel-kicker">EVIDENCE LEDGER</div><h2>证据清单</h2></div><span class="diagnosis-tag">{{ diagnosisResult.evidence.length }} 项 · 缺失率 {{ (diagnosisResult.quality.missing_rate * 100).toFixed(2) }}%</span></header>
+                    <div class="evidence-table">
+                      <div class="evidence-row evidence-head"><span>ID</span><span>分组</span><span>证据</span><span>方法</span><span>样本</span><span>置信</span></div>
+                      <div v-for="item in diagnosisResult.evidence" :key="item.id" class="evidence-row" :class="'evidence-' + item.status">
+                        <span class="evidence-id">{{ item.id }}</span>
+                        <span>{{ item.group }}</span>
+                        <span>{{ item.claim }}</span>
+                        <span :title="item.method">{{ diagnosisMethodLabel(item.method) }}</span>
+                        <span>{{ formatCount(item.sample_size) }}</span>
+                        <span>{{ Math.round(item.confidence_level * 100) }}%</span>
+                      </div>
+                    </div>
+                  </article>
+
+                  <article class="panel diagnosis-tech-card">
+                    <strong>验证明细</strong>
+                    <div v-for="check in diagnosisResult.verification.checks" :key="check.name" class="verify-row" :class="{ failed: !check.passed }">
+                      <i><Check v-if="check.passed" :size="12" /><AlertTriangle v-else :size="12" /></i>
+                      <div><strong>{{ check.label }}</strong><small>{{ check.detail }}</small></div>
+                      <em>{{ Math.round(check.confidence_level * 100) }}%</em>
+                    </div>
+                    <div class="verify-caveats"><span v-for="caveat in diagnosisResult.verification.caveats" :key="caveat">{{ caveat }}</span></div>
+                  </article>
+                </div>
+              </section>
+            </template>
+
+            <section v-else class="panel data-empty diagnosis-empty">
+              <Stethoscope :size="24" />
+              <strong>{{ diagnosisRunning ? "正在执行诊断…" : "数据检查完成" }}</strong>
+              <span>{{ diagnosisError ?? diagnosisCapabilities?.message }}</span>
+              <button type="button" class="outline-action interactive" :disabled="diagnosisRunning" @click="executeDiagnosis">开始诊断</button>
+            </section>
+          </template>
         </template>
 
         <template v-else-if="activeSection === 'ledger'">

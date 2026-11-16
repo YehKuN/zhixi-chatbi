@@ -172,5 +172,6 @@ export const useSessionStore = defineStore("session", () => {
     submitRun,
     loadOlderMessages,
     remove,
+    clearWorkspace,
   };
 });

@@ -1,10 +1,20 @@
 # 智析 ChatBI
 
-> AI 对话式企业数据分析与可视化平台 · 第九届传智杯 AI WEB 开发挑战赛参赛作品 · Team YK
->
-> 代码仓库：https://github.com/YehKuN/zhixi-chatbi
+> AI 对话式企业数据分析与可视化平台 · 第九届传智杯 AI WEB 网页开发挑战赛参赛作品 · Team YK
+
+**在线演示：http://8.163.102.104:18080** — 已部署上线，评审期间保持可用。登录所需评审测试账号随提交包单独提供，不写入本仓库。
+
+**代码仓库：https://github.com/YehKuN/zhixi-chatbi**
+
+| 团队信息 | |
+| --- | --- |
+| 团队名称 / 编号 | Team YK / 43581（B 组） |
+| 所属院校 | 广东东软学院 · 软件工程 |
+| 参赛队员 | 叶锦豪、洪富凯 |
+| 指导教师 | 黄淳笙 |
 
 智析 ChatBI 让业务人员用一句中文问题完成“取数—分析—成图—解释”。平台把自然语言理解、受控分析 Agent、只读 SQL 网关、Python 沙箱和语义图谱组合成一条可审计、可回放、可验证的分析链路：模型负责理解与表达，运行时负责边界与证据，页面负责把结论、图表和依据放在同一个工作台里。
+
 
 ![智析 ChatBI 经营驾驶舱](assets/readme-dashboard.png)
 
@@ -69,7 +79,7 @@ DeepSeek Responses API    ← deepseek-flash（stream=true）
 **目录结构**
 
 ```text
-apps/web                 Vue 3 前端（4 个路由、40 个测试文件）
+apps/web                 Vue 3 前端（8 个路由视图、42 个测试文件）
 apps/api                 FastAPI 主服务（application / runtime / server）
 packages/agent_runtime   受控分析 Agent（状态机、合同、校验、上下文预算）
 packages/data_gateway    SQL 只读网关与连接器
@@ -77,9 +87,10 @@ packages/contracts       跨层数据契约与 Run 事件
 packages/metadata        SQLAlchemy 模型与仓储（17 张表、31 个迁移）
 services/datalink        语义图谱服务（REST + MCP）
 data/demo                906 条演示订单与汇总
+data/public              两套 UCI 真实企业数据（银行营销 / 在线商店）
 data/benchmark           20 题中文电商评测集（gold SQL + 期望答案）
-docs                     18 份开发文档（Markdown + Word）
 tests                    后端测试（46 个文件）
+deploy                   生产镜像、Compose、Nginx 与沙箱 Dockerfile
 ```
 
 ## 快速开始
@@ -173,7 +184,7 @@ npm run build
 .venv\Scripts\ruff.exe check apps\api packages tests tools
 ```
 
-当前本地基线：后端 Pytest **772 项通过**，前端 Vitest **40 个文件 / 282 项通过**，Ruff、vue-tsc 与 Vite 生产构建通过。AI 质量另有 20 题中文电商基准（0.05% 数值容差 + 单元格匹配）、178 条 Run 协议路由用例与 Prompt A/B 实验脚本，详见 [07-AI技术方案说明书](docs/07-AI技术方案说明书.md)。
+当前本地基线：后端 Pytest **828 项通过**，前端 Vitest **42 个文件 / 292 项通过**，Ruff、vue-tsc 与 Vite 生产构建通过。AI 质量另有 20 题中文电商基准（0.05% 数值容差 + 单元格匹配）、178 条 Run 协议路由用例与 Prompt A/B 实验脚本，详见提交包中的《AI 技术方案说明》。
 
 > 说明：仓库中的 `live_model` / `live_docker` 用例默认不进入门禁，需要真实 Key 或本地 Sandbox 镜像时单独执行。
 
@@ -181,20 +192,11 @@ npm run build
 
 | 文档 | 内容 |
 | --- | --- |
-| [01-软件需求规格说明书](docs/01-软件需求规格说明书.md) | 角色、场景、FR/NFR、业务规则、验收基线 |
-| [02-系统架构设计说明书](docs/02-系统架构设计说明书.md) | 分层、组件、三条链路、数据表、部署与可靠性 |
-| [03-功能设计说明书](docs/03-功能设计说明书.md) | 模块、流程、状态、逐功能规则 |
-| [04-UI-UX设计说明](docs/04-UI-UX设计说明.md) | 视觉系统、布局、动效、无障碍 |
-| [05-详细设计说明书](docs/05-详细设计说明书.md) | 前后端模块、Run、DeepSeek、资源释放 |
-| [06-数据与接口设计说明书](docs/06-数据与接口设计说明书.md) | 字段字典、HTTP、SSE、状态码 |
-| [07-AI技术方案说明书](docs/07-AI技术方案说明书.md) | 选型、Agent、工具、预算、评测、隐私 |
-| [09-测试计划与测试用例](docs/09-测试计划与测试用例.md) | 用例与退出条件 |
-| [10-测试报告](docs/10-测试报告.md) | 执行结果与演示数据核对 |
-| [13-系统使用说明及操作手册](docs/13-系统使用说明及操作手册.md) | 启动、问数、数据源、模型、排错 |
-| [14-编译构建指南](docs/14-编译构建指南.md) | 锁定依赖、迁移、构建 |
-| [16-部署发布手册](docs/16-部署发布手册.md) | 环境变量、生产部署、监控、回滚 |
-
-完整索引见 [docs/README.md](docs/README.md)。
+| 《技术文档》 | 项目概述、需求分析、系统架构、AI 技术方案、核心功能实现、测试与部署、创新点与展望（PDF，随提交包提供） |
+| 《AI 能力说明》 | 大模型选型、Agent 编排、工具协议、上下文预算、安全可控与评测方法 |
+| 《测试说明》 | 构建与静态检查、单元/集成/E2E 覆盖、AI 质量基准、性能与缺陷复验 |
+| 《配置与体验说明》 | 环境变量、依赖清单、构建与部署、评审体验路径 |
+| `README.md` / `.env.example` | 本文件与完整环境变量模板（100+ 项） |
 
 ## 安全边界
 

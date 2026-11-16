@@ -19,6 +19,11 @@ export const router = createRouter({
       meta: protectedMeta,
     },
     {
+      path: "/ask",
+      component: () => import("@/views/AskStudioView.vue"),
+      meta: protectedMeta,
+    },
+    {
       path: "/analysis",
       component: () => import("@/views/WorkspaceView.vue"),
       meta: protectedMeta,

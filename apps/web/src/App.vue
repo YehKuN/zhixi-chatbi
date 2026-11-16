@@ -66,7 +66,7 @@ async function handleLogout(): Promise<void> {
       <div class="app-topbar-end">
         <div class="topbar-date">2026 / 10 / 29 · 周四</div>
         <div class="system-chip"><span class="status-dot" /><span>{{ health ? '系统在线' : '演示模式' }}</span><small>{{ healthLabel }}</small></div>
-        <button class="icon-button" type="button" :aria-label="isDark ? '切换浅色主题' : '切换深色主题'" @click="toggleTheme"><Sun v-if="isDark" :size="16" /><Moon v-else :size="16" /></button>
+        <button class="icon-button" type="button" :aria-label="isDark ? '切换日间模式' : '切换夜间模式'" :title="isDark ? '切换日间模式' : '切换夜间模式'" @click="toggleTheme"><Sun v-if="isDark" :size="16" /><Moon v-else :size="16" /></button>
         <div class="profile-chip">
           <span class="profile-avatar">{{ auth.avatarText }}</span>
           <span class="profile-copy"><strong>{{ profileName }}</strong><small>{{ profileDetail }}</small></span>

@@ -9,7 +9,11 @@ ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 
 COPY package.json package-lock.json ./
-RUN npm ci --registry="$NPM_REGISTRY" --no-audit --no-fund
+# lockfile 里的 resolved 指向 registry.npmjs.org，国内构建会 ECONNRESET，统一改写为镜像源。
+RUN sed -i 's|https://registry.npmjs.org|https://registry.npmmirror.com|g' package-lock.json \
+    && npm ci --registry="$NPM_REGISTRY" --no-audit --no-fund \
+        --maxsockets=4 --fetch-retries=10 \
+        --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=120000
 
 COPY apps/web ./apps/web
 RUN npm run build

@@ -146,7 +146,7 @@ async def open_run(
     return RunOpeningResult(
         AgentFailure(
             code=AgentErrorCode.MODEL_OUTPUT_REPAIR_EXHAUSTED,
-            message="模型 Opening 输出连续两次不符合协议",
+            message="模型没有生成可执行的分析计划，请重试或换一种问法",
         ),
         opening_model_calls=2,
         opening_repair_calls=1,
